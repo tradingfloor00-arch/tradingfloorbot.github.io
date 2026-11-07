@@ -10,8 +10,10 @@ async function generate() {
   const pair = document.getElementById('pair').value;
   const out = document.getElementById('out');
   out.textContent = 'Fetching...';
+  const proxy = 'https://corsproxy.io/?';
+  const target = 'https://api1.api.cbtradersbd.com/api/quotex/candles?symbol=' + pair + '&limit=60';
   try {
-    const r = await fetch('https://api1.api.cbtradersbd.com/api/quotex/candles?symbol=' + pair + '&limit=60');
+    const r = await fetch(proxy + encodeURIComponent(target));
     const data = await r.json();
     const candles = data.candles || data;
     if (!candles.length) { out.textContent = 'No data returned'; return; }
