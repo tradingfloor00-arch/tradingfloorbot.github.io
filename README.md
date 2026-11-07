@@ -3,181 +3,289 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>TradingFloor AI - Quotex API Tester</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TradingFloor AI - Quotex Feed Tester</title>
 <style>
 *{box-sizing:border-box}
-body{margin:0;background:#07111e;color:#eaf3ff;font-family:Arial,sans-serif;padding:18px}
-main{max-width:850px;margin:auto}
-header{padding:22px 5px}
-header small{color:#39a5ff;letter-spacing:2px}
-h1{font-size:25px;margin:10px 0}
-.panel{background:#101f31;border:1px solid #263d56;border-radius:13px;padding:18px;margin:14px 0}
-.status{padding:12px;background:#071525;border-radius:8px;color:#ffca60;font-size:13px}
-label{display:block;font-size:12px;color:#a9bdd2;margin:15px 0 6px}
-input,select{width:100%;padding:13px;border-radius:8px;border:1px solid #36516e;background:#071525;color:white}
-button{border:0;border-radius:8px;padding:13px;background:#087fe5;color:white;font-weight:bold;cursor:pointer;margin:5px 3px 5px 0}
+body{margin:0;background:#07111f;color:#eaf2ff;font-family:Arial,sans-serif;padding:18px}
+.wrap{max-width:850px;margin:auto}
+h1{color:#45a7ff;font-size:25px}
+.panel{background:#102137;border:1px solid #203b58;border-radius:13px;padding:16px;margin:14px 0}
+label{display:block;color:#9eb6d1;font-size:13px;margin:12px 0 6px}
+input,select{width:100%;padding:12px;background:#071525;border:1px solid #31516f;color:white;border-radius:8px;font-size:15px}
+button{padding:12px 15px;border:0;border-radius:8px;background:#087ee5;color:white;font-weight:bold;margin:8px 5px 0 0;cursor:pointer}
+button.secondary{background:#25415f}
 button:disabled{opacity:.5}
-.actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:15px}
-.actions button{margin:0}
-.price{font-size:32px;font-weight:bold;margin:15px 0;color:#53b3ff}
-pre{background:#030a12;color:#9de7c2;padding:14px;border-radius:8px;white-space:pre-wrap;overflow-wrap:anywhere;min-height:110px;font-size:12px}
-small{color:#9eb2c8}
+.status{padding:12px;border-radius:8px;background:#071525;margin-top:12px;color:#ffc45c;overflow-wrap:anywhere}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#050d17;padding:13px;border-radius:8px;color:#b9d9ff;max-height:400px;overflow:auto;font-size:12px}
+.small{font-size:12px;color:#91a9c4;line-height:1.5}
+.price{font-size:26px;color:#42d6a0;font-weight:bold;margin:12px 0}
 </style>
 </head>
 <body>
-<main>
-<header>
-<small>TRADINGFLOOR AI</small>
-<h1>QUOTEX MARKET DATA TESTER</h1>
-<p>Independent API connection and market data diagnostics</p>
-</header>
+<div class="wrap">
+<h1>TRADINGFLOOR AI</h1>
+<p class="small">QUOTEX API CONNECTION & MARKET DATA TESTER</p>
 
 <div class="panel">
-<div class="status" id="status">NOT CONNECTED — READY TO TEST</div>
-
 <label>API Base URL</label>
 <input id="base" value="https://api1.api.cbtradersbd.com">
 
 <label>API Key</label>
-<input id="apiKey" type="password" autocomplete="off" placeholder="Enter your API key">
+<input id="key" type="password" placeholder="Enter your API key">
 
 <label>Market Pair</label>
 <select id="pair">
+<optgroup label="Popular OTC Forex">
 <option>EURUSD_otc</option>
 <option>GBPUSD_otc</option>
 <option>USDJPY_otc</option>
 <option>AUDUSD_otc</option>
 <option>USDCAD_otc</option>
+<option>USDCHF_otc</option>
+<option>NZDUSD_otc</option>
 <option>EURGBP_otc</option>
+<option>EURJPY_otc</option>
+<option>GBPJPY_otc</option>
+<option>AUDJPY_otc</option>
+<option>EURCHF_otc</option>
+<option>EURCAD_otc</option>
+<option>EURAUD_otc</option>
+<option>GBPAUD_otc</option>
+<option>GBPCAD_otc</option>
+<option>GBPCHF_otc</option>
+<option>AUDCHF_otc</option>
+<option>AUDCAD_otc</option>
+<option>AUDNZD_otc</option>
+<option>NZDJPY_otc</option>
+<option>NZDCHF_otc</option>
+<option>CADJPY_otc</option>
+<option>CHFJPY_otc</option>
+<option>USDMXN_otc</option>
+<option>USDZAR_otc</option>
+<option>USDINR_otc</option>
+<option>USDPKR_otc</option>
+<option>USDNGN_otc</option>
+<option>USDIDR_otc</option>
+<option>USDPHP_otc</option>
+<option>USDBDT_otc</option>
+<option>USDARS_otc</option>
+<option>USDCOP_otc</option>
+<option>USDEGP_otc</option>
+<option>USDDZD_otc</option>
+<option>BRLUSD_otc</option>
+</optgroup>
+<optgroup label="OTC Metals and Crypto">
+<option>XAUUSD_otc</option>
+<option>XAGUSD_otc</option>
+<option>BTCUSD_otc</option>
+<option>ETHUSD_otc</option>
+<option>LTCUSD_otc</option>
+<option>BCHUSD_otc</option>
+<option>BNBUSD_otc</option>
+<option>SOLUSD_otc</option>
+<option>XRPUSD_otc</option>
+<option>DOGEUSD_otc</option>
+<option>DOTUSD_otc</option>
+<option>ETCUSD_otc</option>
+</optgroup>
+<optgroup label="Live Forex">
 <option>EURUSD</option>
 <option>GBPUSD</option>
 <option>USDJPY</option>
+<option>AUDUSD</option>
+<option>USDCAD</option>
+<option>USDCHF</option>
+<option>NZDUSD</option>
+<option>EURGBP</option>
+<option>EURJPY</option>
+<option>GBPJPY</option>
+<option>EURCHF</option>
+<option>EURCAD</option>
+<option>EURAUD</option>
+<option>AUDJPY</option>
+<option>AUDCHF</option>
+<option>AUDCAD</option>
+<option>GBPAUD</option>
+<option>GBPCAD</option>
+<option>GBPCHF</option>
+<option>CADJPY</option>
+<option>CHFJPY</option>
+<option>XAUUSD</option>
+<option>XAGUSD</option>
+</optgroup>
 </select>
+
+<label>Or enter another symbol</label>
+<input id="customPair" placeholder="Example: USDTRY_otc (leave blank to use selection)">
 
 <label>Timeframe</label>
-<select id="timeframe">
-<option value="1m">1 Minute</option>
-<option value="5m">5 Minutes</option>
-<option value="15m">15 Minutes</option>
-<option value="30m">30 Minutes</option>
-<option value="1h">1 Hour</option>
+<select id="tf">
+<option value="60">1 minute</option>
+<option value="300">5 minutes</option>
+<option value="900">15 minutes</option>
+<option value="1800">30 minutes</option>
+<option value="3600">1 hour</option>
 </select>
 
-<div class="actions">
-<button onclick="test('schema')">TEST API</button>
-<button onclick="test('live-price')">LIVE PRICE</button>
-<button onclick="test('candles')">GET CANDLES</button>
-<button onclick="test('payouts')">GET PAYOUTS</button>
+<div>
+<button onclick="testApi()">TEST CONNECTION</button>
+<button onclick="getPrice()">LIVE PRICE</button>
+<button onclick="getCandles()">GET CANDLES</button>
+<button onclick="getPayouts()" class="secondary">GET PAYOUTS</button>
 </div>
+
+<div id="status" class="status">Ready. Enter your API key and test the connection.</div>
+<div id="price" class="price"></div>
 </div>
 
 <div class="panel">
-<small>LIVE MARKET PRICE</small>
-<div class="price" id="price">--</div>
-<small id="priceInfo">No verified price received</small>
+<h3>API RESPONSE / DIAGNOSTICS</h3>
+<pre id="output">Waiting for request...</pre>
 </div>
 
-<div class="panel">
-<h3>API RESPONSE</h3>
-<pre id="output">Ready. Select a test above.</pre>
+<p class="small">
+This page only reads market data. It does not place trades.
+Pair names are a test catalogue, not confirmation that every symbol is enabled by the API.
+</p>
 </div>
-
-<div class="panel">
-<h3>Connection information</h3>
-<p><small>API host: api1.api.cbtradersbd.com</small></p>
-<p><small>Data endpoints: live-price, candles, payouts</small></p>
-<p><small>This tester does not execute trades or submit account credentials.</small></p>
-</div>
-</main>
 
 <script>
 const $=id=>document.getElementById(id);
 
-function display(status,data){
- $("status").textContent=status;
+function pair(){
+ return $("customPair").value.trim() || $("pair").value;
+}
+
+function show(message,data){
+ $("status").textContent=message;
  $("output").textContent=typeof data==="string"?data:JSON.stringify(data,null,2);
 }
 
-function getHeaders(){
- const key=$("apiKey").value.trim();
- if(!key)throw Error("Enter the API key.");
- return {
-  "Accept":"application/json",
-  "Authorization":"Bearer "+key,
-  "X-API-Key":key
- };
+function headers(){
+ const k=$("key").value.trim();
+ const h={"Accept":"application/json"};
+ if(k){
+  h["Authorization"]="Bearer "+k;
+  h["X-API-Key"]=k;
+ }
+ return h;
+}
+
+function base(){
+ return $("base").value.trim().replace(/\/+$/,"");
 }
 
 async function request(path,params={}){
- const base=$("base").value.trim().replace(/\/+$/,"");
- const url=new URL(base+path);
+ const url=new URL(base()+path);
  Object.entries(params).forEach(([k,v])=>url.searchParams.set(k,v));
-
- const response=await fetch(url,{
+ const response=await fetch(url.toString(),{
   method:"GET",
-  headers:getHeaders(),
+  headers:headers(),
   cache:"no-store"
  });
-
- const raw=await response.text();
- let data;
- try{data=JSON.parse(raw)}catch{data=raw}
-
+ const body=await response.text();
+ let parsed;
+ try{parsed=JSON.parse(body)}catch(e){parsed=body}
  if(!response.ok){
-  throw Error("HTTP "+response.status+": "+
-   (typeof data==="string"?data:JSON.stringify(data)));
+  throw new Error("HTTP "+response.status+" "+response.statusText+
+   "\nEndpoint: "+url+
+   "\nResponse: "+(typeof parsed==="string"?parsed:JSON.stringify(parsed)));
  }
- return {data,url:url.toString()};
+ return {endpoint:url.toString(),status:response.status,data:parsed};
 }
 
-async function test(type){
- $("priceInfo").textContent="Testing...";
- display("REQUEST IN PROGRESS","Contacting API...");
-
- try{
-  let result;
-
-  if(type==="schema"){
-   result=await request("/openapi.json");
-  }
-
-  if(type==="live-price"){
-   const pair=$("pair").value;
-   result=await request("/api/quotex/live-price",{pair});
-   const d=result.data;
-   const p=typeof d==="number"?d:
-    d.price??d.close??d.last??d.rate??d.data?.price??d.data?.close;
-   if(p!==undefined){
-    $("price").textContent=p;
-    $("priceInfo").textContent="Price returned by API for "+pair;
-   }else{
-    $("priceInfo").textContent="Response received; price field not identified.";
+async function tryEndpoints(paths,parameterSets){
+ let errors=[];
+ for(const path of paths){
+  for(const params of parameterSets){
+   try{
+    return await request(path,params);
+   }catch(e){
+    errors.push(e.message);
    }
   }
+ }
+ throw new Error(errors.join("\n\n----------------\n\n"));
+}
 
-  if(type==="candles"){
-   result=await request("/api/quotex/candles",{
-    pair:$("pair").value,
-    timeframe:$("timeframe").value
-   });
+async function testApi(){
+ $("price").textContent="";
+ show("Testing API connection...","Please wait.");
+ try{
+  const r=await request("/openapi.json");
+  show("API CONNECTION SUCCESS",r);
+ }catch(e){
+  show("CONNECTION TEST FAILED",e.message);
+ }
+}
+
+async function getPrice(){
+ $("price").textContent="";
+ show("Requesting live price...","Please wait.");
+ const p=pair();
+ const sets=[
+  {pair:p},
+  {symbol:p},
+  {asset:p},
+  {asset_name:p}
+ ];
+ try{
+  const r=await tryEndpoints(
+   ["/api/live-price","/api/quotex/live-price"],
+   sets
+  );
+  const data=r.data;
+  let found="";
+  if(data && typeof data==="object"){
+   found=data.price??data.close??data.rate??data.last_price??data.bid??"";
+   if(typeof data.data==="object" && data.data!==null){
+    found=data.data.price??data.data.close??data.data.rate??found;
+   }
   }
+  $("price").textContent=found!==""?"PRICE: "+found:"Price field not recognized - inspect response below.";
+  show("LIVE PRICE RESPONSE RECEIVED",r);
+ }catch(e){
+  show("LIVE PRICE FAILED",e.message);
+ }
+}
 
-  if(type==="payouts"){
-   result=await request("/api/quotex/payouts");
-  }
+async function getCandles(){
+ $("price").textContent="";
+ show("Requesting candle data...","Please wait.");
+ const p=pair();
+ const t=$("tf").value;
+ const sets=[
+  {pair:p,timeframe:t},
+  {symbol:p,timeframe:t},
+  {asset:p,timeframe:t},
+  {pair:p,interval:t},
+  {symbol:p,interval:t},
+  {asset:p,interval:t},
+  {pair:p,timeframe:Number(t)},
+  {symbol:p,timeframe:Number(t)}
+ ];
+ try{
+  const r=await tryEndpoints(
+   ["/api/candles","/api/quotex/candles"],
+   sets
+  );
+  show("CANDLE DATA RECEIVED",r);
+ }catch(e){
+  show("CANDLE REQUEST FAILED",e.message);
+ }
+}
 
-  display("SUCCESS — HTTP RESPONSE RECEIVED",{
-   request:result.url,
-   response:result.data
-  });
-
- }catch(error){
-  $("priceInfo").textContent="No verified live price";
-  display("REQUEST FAILED",{
-   error:error.message,
-   guidance:"A CORS error or Failed to fetch means browser access may be blocked. HTTP 401/403 means authentication may be incorrect. HTTP 422 usually means the request parameters need correction."
-  });
+async function getPayouts(){
+ show("Requesting payout information...","Please wait.");
+ try{
+  const r=await tryEndpoints(
+   ["/api/payouts","/api/quotex/payouts"],
+   [{},{pair:pair()},{symbol:pair()}]
+  );
+  show("PAYOUT RESPONSE RECEIVED",r);
+ }catch(e){
+  show("PAYOUT REQUEST FAILED",e.message);
  }
 }
 </script>
