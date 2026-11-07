@@ -1,341 +1,158 @@
 
-<!-- TRADINGFLOOR AI - QUOTEX BINARY FEED TESTER -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TradingFloor AI | Quotex Feed Test</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#07111f;color:#eaf3ff;font-family:Arial,sans-serif;padding:18px}
+main{max-width:850px;margin:auto}
+.panel{background:#101f32;border:1px solid #263e58;border-radius:14px;padding:18px;margin-bottom:15px}
+h1{font-size:23px;color:#55adff}
+p{color:#a9bdd2;line-height:1.5}
+input,select{width:100%;padding:13px;margin:7px 0 14px;background:#071525;color:white;border:1px solid #36516e;border-radius:7px}
+button{padding:13px 16px;margin:4px 3px 8px 0;background:#087fe5;color:white;border:0;border-radius:7px;font-weight:bold}
+button:disabled{opacity:.5}
+pre{background:#030a12;color:#9ee7c1;padding:14px;border-radius:9px;white-space:pre-wrap;overflow-wrap:anywhere;min-height:130px}
+.status{padding:12px;background:#071525;border-radius:8px;color:#67c4ff}
+small{color:#9eb2c8}
+</style>
+</head>
+<body>
+<main>
+<div class="panel">
+<h1>TRADINGFLOOR AI</h1>
+<h2>Quotex API Connection Test</h2>
+<p>Diagnostic only. This page does not place trades or generate trading instructions.</p>
+<div class="status" id="status">Ready to test</div>
+</div>
 
-<section id="quotex-binary" class="page-section">
-  <style>
-    #quotex-binary {
-      color: #e2e8f0;
-      background: #071426;
-      padding: 20px;
-      border-radius: 14px;
-      font-family: Arial, sans-serif;
-    }
-    #quotex-binary .qx-panel {
-      background: #102238;
-      border: 1px solid #243c56;
-      border-radius: 12px;
-      padding: 16px;
-      margin-bottom: 15px;
-    }
-    #quotex-binary h2 { color: #38bdf8; }
-    #quotex-binary input,
-    #quotex-binary select {
-      background: #071426;
-      color: white;
-      border: 1px solid #34516d;
-      border-radius: 7px;
-      padding: 12px;
-      width: 100%;
-      margin: 7px 0;
-      box-sizing: border-box;
-    }
-    #quotex-binary button {
-      background: #0284c7;
-      color: white;
-      border: 0;
-      border-radius: 8px;
-      padding: 12px 16px;
-      font-weight: bold;
-      cursor: pointer;
-      margin: 5px 3px 5px 0;
-    }
-    #quotex-binary .qx-muted {
-      color: #94a3b8;
-      font-size: 12px;
-    }
-    #quotex-binary .qx-price {
-      font-size: 28px;
-      font-weight: bold;
-      color: #22c55e;
-      margin: 12px 0;
-    }
-    #quotex-binary pre {
-      white-space: pre-wrap;
-      overflow-wrap: anywhere;
-      color: #a5f3fc;
-      background: #050d18;
-      padding: 12px;
-      border-radius: 8px;
-      max-height: 300px;
-      overflow: auto;
-      font-size: 11px;
-    }
-    #quotex-binary .qx-status {
-      padding: 10px;
-      border-radius: 8px;
-      background: #172b40;
-      margin: 10px 0;
-      font-size: 13px;
-    }
-    #quotex-binary .qx-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit,minmax(130px,1fr));
-      gap: 10px;
-    }
-  </style>
+<div class="panel">
+<label>API base URL</label>
+<input id="base" value="https://api1.api.cbtradersbd.com">
 
-  <div class="qx-panel">
-    <h2>TRADINGFLOOR AI</h2>
-    <h3>Quotex Binary Intelligence</h3>
-    <p class="qx-muted">
-      Live feed connection diagnostic · Quotex REST API
-    </p>
+<label>API key</label>
+<input id="key" type="password" autocomplete="off" placeholder="Enter your API key">
 
-    <div class="qx-status" id="qx-status">
-      Waiting for connection test...
-    </div>
+<label>Market symbol</label>
+<input id="symbol" value="EURUSD_otc">
 
-    <label>Quotex market symbol</label>
-    <select id="qx-symbol">
-      <option value="EURUSD_otc">EURUSD OTC</option>
-      <option value="GBPUSD_otc">GBPUSD OTC</option>
-      <option value="USDJPY_otc">USDJPY OTC</option>
-      <option value="AUDUSD_otc">AUDUSD OTC</option>
-      <option value="BTCUSD_otc">BTCUSD OTC</option>
-      <option value="EURUSD">EURUSD</option>
-      <option value="GBPUSD">GBPUSD</option>
-    </select>
+<label>Candle timeframe</label>
+<select id="timeframe">
+<option value="1m">1 minute</option>
+<option value="5m">5 minutes</option>
+<option value="15m">15 minutes</option>
+<option value="30m">30 minutes</option>
+<option value="1h">1 hour</option>
+</select>
 
-    <label>Custom symbol</label>
-    <input id="qx-custom" placeholder="Example: USDCHF_otc">
+<button onclick="testSchema()">TEST API SCHEMA</button>
+<button onclick="testEndpoint('live-price')">TEST LIVE PRICE</button>
+<button onclick="testEndpoint('candles')">TEST CANDLES</button>
+<button onclick="testEndpoint('payouts')">TEST PAYOUTS</button>
+</div>
 
-    <button id="qx-test">TEST QUOTEX FEED</button>
-    <button id="qx-candles">TEST CANDLES</button>
-  </div>
-
-  <div class="qx-panel">
-    <h3>Market data</h3>
-    <div class="qx-grid">
-      <div>
-        <div class="qx-muted">Selected symbol</div>
-        <strong id="qx-market">--</strong>
-      </div>
-      <div>
-        <div class="qx-muted">Live price</div>
-        <div class="qx-price" id="qx-price">--</div>
-      </div>
-      <div>
-        <div class="qx-muted">Payout</div>
-        <strong id="qx-payout">--</strong>
-      </div>
-      <div>
-        <div class="qx-muted">Candles received</div>
-        <strong id="qx-count">0</strong>
-      </div>
-    </div>
-  </div>
-
-  <div class="qx-panel">
-    <h3>Feed response</h3>
-    <pre id="qx-response">No response yet.</pre>
-  </div>
-
-  <div class="qx-panel">
-    <h3>Candle response</h3>
-    <pre id="qx-candle-response">No candle request yet.</pre>
-  </div>
-
-  <div class="qx-panel">
-    <h3>Connection information</h3>
-    <p class="qx-muted">
-      API host: api1.api.cbtradersbd.com
-    </p>
-    <p class="qx-muted">
-      This tester only requests market data. It does not
-      place trades or access your Quotex account.
-    </p>
-  </div>
-</section>
+<div class="panel">
+<h3>API Response</h3>
+<pre id="output">Waiting for your test...</pre>
+</div>
+</main>
 
 <script>
-(function() {
-  const BASE = "https://api1.api.cbtradersbd.com";
+const $ = id => document.getElementById(id);
 
-  const $ = id => document.getElementById(id);
+function report(message,data){
+  $("status").textContent=message;
+  $("output").textContent=
+    typeof data==="string"?data:JSON.stringify(data,null,2);
+}
 
-  function status(message) {
-    $("qx-status").textContent = message;
+function baseURL(){
+  return $("base").value.trim().replace(/\/+$/,"");
+}
+
+function headers(){
+  const key=$("key").value.trim();
+  if(!key) throw new Error("Enter the API key first.");
+  return {
+    "Accept":"application/json",
+    "Authorization":"Bearer "+key,
+    "X-API-Key":key
+  };
+}
+
+async function request(path){
+  const response=await fetch(baseURL()+path,{
+    method:"GET",
+    headers:headers(),
+    cache:"no-store"
+  });
+
+  const text=await response.text();
+  let data;
+  try{data=JSON.parse(text)}
+  catch{data=text}
+
+  if(!response.ok){
+    throw new Error("HTTP "+response.status+" | "+
+      (typeof data==="string"?data:JSON.stringify(data)));
+  }
+  return data;
+}
+
+async function testSchema(){
+  report("Testing API documentation...", "Connecting...");
+  try{
+    const data=await request("/openapi.json");
+    report("API SCHEMA SUCCESS",data);
+  }catch(error){
+    report("SCHEMA TEST FAILED",{
+      error:error.message,
+      note:"The provider may use another schema URL, require different authentication, or block browser access."
+    });
+  }
+}
+
+async function testEndpoint(name){
+  const symbol=$("symbol").value.trim();
+  const timeframe=$("timeframe").value;
+
+  if(!symbol){
+    report("Missing symbol","Enter a market symbol.");
+    return;
   }
 
-  function selectedSymbol() {
-    return (
-      $("qx-custom").value.trim() ||
-      $("qx-symbol").value
-    );
+  const params=new URLSearchParams();
+  params.set("symbol",symbol);
+
+  if(name==="candles"){
+    params.set("timeframe",timeframe);
   }
 
-  async function requestEndpoint(path, symbol) {
-    const attempts = [
-      {pair: symbol},
-      {symbol: symbol},
-      {asset: symbol}
-    ];
+  const path="/api/quotex/"+name+"?"+params.toString();
 
-    let errors = [];
+  report("Testing "+name+"...",{
+    endpoint:baseURL()+path,
+    symbol,
+    timeframe
+  });
 
-    for (const params of attempts) {
-      const query = new URLSearchParams(params);
-
-      const url = BASE + path + "?" + query.toString();
-
-      try {
-        const response = await fetch(url, {
-          method: "GET",
-          headers: {
-            "Accept": "application/json"
-          },
-          cache: "no-store"
-        });
-
-        const body = await response.text();
-
-        let data;
-
-        try {
-          data = JSON.parse(body);
-        } catch {
-          data = body;
-        }
-
-        if (response.ok) {
-          return {
-            success: true,
-            status: response.status,
-            url,
-            data
-          };
-        }
-
-        errors.push({
-          status: response.status,
-          response: data
-        });
-
-      } catch (error) {
-        errors.push({
-          error: error.message
-        });
-      }
-    }
-
-    return {
-      success: false,
-      errors
-    };
+  try{
+    const data=await request(path);
+    report(name.toUpperCase()+" SUCCESS",{
+      endpoint:path,
+      response:data
+    });
+  }catch(error){
+    report(name.toUpperCase()+" FAILED",{
+      endpoint:path,
+      error:error.message,
+      guidance:"Check the provider's exact parameter names and authentication requirements. Failed to fetch may indicate CORS or network restrictions."
+    });
   }
-
-  function findValue(data, keys) {
-    if (!data || typeof data !== "object") return null;
-
-    for (const key of keys) {
-      if (data[key] !== undefined && data[key] !== null) {
-        return data[key];
-      }
-    }
-
-    for (const key of ["data", "result", "price_data"]) {
-      if (data[key] && typeof data[key] === "object") {
-        const found = findValue(data[key], keys);
-        if (found !== null) return found;
-      }
-    }
-
-    return null;
-  }
-
-  async function testPrice() {
-    const symbol = selectedSymbol();
-
-    $("qx-market").textContent = symbol;
-    $("qx-price").textContent = "Testing...";
-    status("Connecting to Quotex live-price endpoint...");
-
-    const result = await requestEndpoint(
-      "/api/quotex/live-price",
-      symbol
-    );
-
-    $("qx-response").textContent =
-      JSON.stringify(result, null, 2);
-
-    if (!result.success) {
-      $("qx-price").textContent = "--";
-      status(
-        "Feed test failed. Check API availability, endpoint parameters and CORS."
-      );
-      return;
-    }
-
-    const price = findValue(result.data, [
-      "price",
-      "close",
-      "last_price",
-      "current_price"
-    ]);
-
-    const payout = findValue(result.data, [
-      "payout",
-      "payout_percentage"
-    ]);
-
-    $("qx-price").textContent =
-      price !== null ? String(price) : "Response received";
-
-    $("qx-payout").textContent =
-      payout !== null ? String(payout) + "%" : "--";
-
-    status(
-      price !== null
-        ? "Price data received. Verify the symbol and timestamp."
-        : "API responded, but the price field needs mapping."
-    );
-  }
-
-  async function testCandles() {
-    const symbol = selectedSymbol();
-
-    status("Requesting Quotex historical candles...");
-
-    const result = await requestEndpoint(
-      "/api/quotex/candles",
-      symbol
-    );
-
-    $("qx-candle-response").textContent =
-      JSON.stringify(result, null, 2);
-
-    if (!result.success) {
-      status(
-        "Candle request failed. Endpoint schema or browser access may differ."
-      );
-      return;
-    }
-
-    let candles = result.data;
-
-    if (!Array.isArray(candles)) {
-      candles = findValue(result.data, [
-        "candles",
-        "data",
-        "history",
-        "results"
-      ]);
-    }
-
-    $("qx-count").textContent =
-      Array.isArray(candles) ? candles.length : "Unknown";
-
-    status(
-      Array.isArray(candles)
-        ? "Candle response received. Check the returned OHLC fields."
-        : "API responded. Candle response format needs mapping."
-    );
-  }
-
-  $("qx-test").addEventListener("click", testPrice);
-  $("qx-candles").addEventListener("click", testCandles);
-
-})();
+}
 </script>
-
-<!-- END QUOTEX BINARY FEED TESTER -->
+</body>
+</html>
