@@ -129,7 +129,7 @@ canvas{width:100%;height:190px;display:block}
     <div class="status-box">
       <div class="status-label">Connection</div>
       <div class="status-value" id="tf-connection">● READY</div>
-      <div class="small" style="margin-top:8px">Source: CB Traders → Proxies → OTCharts</div>
+      <div class="small" style="margin-top:8px">Source: Secure server proxy → market data</div>
     </div>
   </div>
 
@@ -183,7 +183,7 @@ canvas{width:100%;height:190px;display:block}
         </div>
 
         <div class="message" id="tf-message">
-          Ready. Click Generate Signal. If main feed fails, OTCharts fallback activates automatically (if key is provided).
+          Ready. The browser no longer tries blocked public CORS proxies. It uses a secure server route when deployed.
         </div>
       </div>
     </div>
@@ -236,16 +236,8 @@ ROOT.dataset.initialized = "yes";
 
 const $ = id => document.getElementById("tf-" + id);
 
-const BASE_API = "https://api1.api.cbtradersbd.com/api/quotex/candles";
-const OTCHARTS_API = "https://otcharts.com/v1/candles";
-
-const PROXIES = [
-  url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-  url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-  url => `https://proxy.cors.dev/${url}`,
-  url => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
-  url => url
-];
+const SAFE_PROXY = "/api/quotex";
+const OTCHARTS_API = "/api/quotex";
 
 let autoTimer = null;
 let lastCandles = [];
@@ -281,7 +273,6 @@ const cryptoPairs = [
 
 const metalPairs = ["XAUUSD_otc","XAGUSD_otc"];
 
-// Load saved OTCharts key
 const savedKey = localStorage.getItem("tf_otcharts_key") || "";
 if (savedKey) $("otkey").value = savedKey;
 
@@ -326,7 +317,7 @@ function changeCategory() {
 }
 
 $("category").addEventListener("change", changeCategory);
-changeCategory(); // init
+changeCategory();
 
 function normalizeCandles(data) {
   let rows = data?.candles ?? data?.data?.candles ?? data?.data ?? data?.result ?? data;
@@ -371,8 +362,10 @@ async function tryFetch(url, options = {}, timeoutMs = 16000) {
       signal: controller.signal,
       ...options
     });
+
     const raw = await response.text();
     if (!response.ok) throw new Error(`HTTP ${response.status}: ${raw.slice(0, 180)}`);
+
     let data;
     try { data = JSON.parse(raw); }
     catch (e) { throw new Error("Invalid JSON returned"); }
@@ -382,49 +375,40 @@ async function tryFetch(url, options = {}, timeoutMs = 16000) {
   }
 }
 
-async function fetchFromMainAPI(pair, tf) {
-  const target = `${BASE_API}?symbol=${encodeURIComponent(pair)}&limit=120&tf=${tf}&interval=${tf}&timeframe=${tf}`;
-  let lastError = null;
+async function fetchFromServer(pair, tf) {
+  const base = new URL(SAFE_PROXY, window.location.origin || window.location.href);
+  base.searchParams.set("symbol", pair);
+  base.searchParams.set("tf", String(tf));
+  base.searchParams.set("limit", "120");
 
-  for (const makeUrl of PROXIES) {
-    const url = makeUrl(target);
-    try {
-      const label = url.includes("allorigins") ? "allorigins" :
-                    url.includes("corsproxy") ? "corsproxy" :
-                    url.includes("cors.dev") ? "cors.dev" :
-                    url.includes("codetabs") ? "codetabs" : "direct";
-      setMessage(`Trying main feed via ${label}...`);
-      const data = await tryFetch(url, {
-        headers: { "Accept": "application/json" }
-      });
-      const candles = normalizeCandles(data);
-      if (candles.length >= 25) return candles;
-      lastError = new Error(`Only ${candles.length} valid candles`);
-    } catch (err) {
-      lastError = err;
-      console.warn("Main API proxy failed:", err.message);
-    }
+  setMessage("Requesting candles from secure server proxy...");
+  const data = await tryFetch(base.toString(), {
+    headers: { "Accept": "application/json" }
+  });
+
+  const candles = normalizeCandles(data);
+  if (candles.length < 25) {
+    throw new Error(`Server proxy returned only ${candles.length} valid candles`);
   }
-  throw lastError || new Error("All main proxies failed");
+
+  return candles;
 }
 
 async function fetchFromOTCharts(pair, tf) {
   const key = $("otkey").value.trim();
   if (!key) throw new Error("No OTCharts API key provided");
 
-  // OTCharts prefers symbols ending with _otc for OTC
-  let symbol = pair;
-  if (!symbol.includes("_") && !symbol.includes("-")) {
-    // leave as-is for live pairs
-  }
+  const base = new URL(OTCHARTS_API, window.location.origin || window.location.href);
+  base.searchParams.set("symbol", pair);
+  base.searchParams.set("tf", String(tf));
+  base.searchParams.set("limit", "120");
+  base.searchParams.set("venue", "quotex");
 
-  const url = `${OTCHARTS_API}?venue=quotex&symbol=${encodeURIComponent(symbol)}&tf=${tf}&limit=120`;
-
-  setMessage("Main feed failed → switching to OTCharts fallback...");
-  const data = await tryFetch(url, {
+  setMessage("Using OTCharts fallback through the secure proxy...");
+  const data = await tryFetch(base.toString(), {
     headers: {
       "Accept": "application/json",
-      "Authorization": `Bearer ${key}`
+      "x-otcharts-key": key
     }
   });
 
@@ -439,25 +423,27 @@ async function fetchCandles() {
   const pair = selectedPair();
   const tf = selectedTimeframe();
 
-  // 1. Try main CB Traders API + proxies
   try {
-    return await fetchFromMainAPI(pair, tf);
-  } catch (mainErr) {
-    console.warn("Main API failed:", mainErr.message);
-  }
+    return await fetchFromServer(pair, tf);
+  } catch (serverErr) {
+    if (window.location.hostname.endsWith("github.io") || window.location.protocol === "file:") {
+      throw new Error(
+        "This page is running in GitHub Pages or local file mode, which cannot fetch market data directly. " +
+        "Deploy it on Vercel/Netlify/Cloudflare Workers and keep the /api/quotex route active, then retry."
+      );
+    }
 
-  // 2. Fallback to OTCharts
-  try {
-    return await fetchFromOTCharts(pair, tf);
-  } catch (otErr) {
-    throw new Error(
-      `Main feed failed. OTCharts fallback also failed: ${otErr.message}. ` +
-      `Get a free key at otcharts.com and paste it above.`
-    );
+    try {
+      return await fetchFromOTCharts(pair, tf);
+    } catch (otErr) {
+      throw new Error(
+        "Secure proxy failed. " + serverErr.message + " OTCharts fallback failed: " + otErr.message +
+        ". Add your OTCharts key or deploy the server proxy correctly."
+      );
+    }
   }
 }
 
-// ===== Indicators & Analysis =====
 function average(values) {
   return values.reduce((a, b) => a + b, 0) / values.length;
 }
