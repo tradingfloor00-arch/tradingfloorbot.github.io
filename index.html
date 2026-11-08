@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TradingFloor — OTC Candle Viewer</title>
+  <style>
+    :root{color-scheme:dark;--bg:#07111f;--panel:#102039;--line:#29415f;--text:#eaf3ff;--muted:#9bb0c9;--cyan:#36c5ff;--green:#19d69b;--red:#ff5575;--yellow:#ffd166}
+    *{box-sizing:border-box}body{margin:0;background:linear-gradient(145deg,#07111f,#0b1c31);color:var(--text);font:16px/1.5 system-ui,Segoe UI,Arial,sans-serif}
+    main{max-width:980px;margin:36px auto;padding:0 16px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:20px;margin:16px 0}
+    h1{font-size:clamp(25px,5vw,36px);margin:0 0 6px}.muted,.note{color:var(--muted)}.controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;align-items:end}
+    label{display:block;color:var(--muted);font-size:12px;font-weight:700;text-transform:uppercase;margin-bottom:5px}input,select,button{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;background:#081729;color:var(--text);font:inherit}
+    button{border:0;background:linear-gradient(120deg,#1d8dff,#14c9a8);color:#031018;font-weight:800;cursor:pointer}button:disabled{opacity:.6;cursor:wait}.status{padding:12px;border:1px solid var(--line);border-radius:10px;margin-top:14px;white-space:pre-wrap;overflow-wrap:anywhere}.error{color:#ffd0d8;border-color:#873d53;background:#351622}.good{color:#baffea;border-color:#1b705a;background:#0d3029}
+    .signal{font-size:30px;font-weight:900}.CALL{color:var(--green)}.PUT{color:var(--red)}.WAIT{color:var(--yellow)}.metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px}.metric{background:#091729;padding:12px;border:1px solid var(--line);border-radius:10px}.metric small{display:block;color:var(--muted)}table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:right;padding:8px;border-bottom:1px solid var(--line)}th:first-child,td:first-child{text-align:left}.scroll{overflow:auto;max-height:360px}
+    @media(max-width:600px){main{margin:18px auto}.panel{padding:15px}table{font-size:12px}}
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>TradingFloor · OTC Candle Viewer</h1>
+    <div class="muted">Static GitHub Pages edition · Read-only market data via OTCharts</div>
+  </header>
+  <section class="panel">
+    <p class="note">Enter your OTCharts API key for this browser session. It is not saved or sent anywhere except OTCharts. Never enter your Quotex password. This page can only fetch data if OTCharts allows browser CORS for your site; a static page cannot run a private server proxy.</p>
+    <div class="controls">
+      <div><label for="key">OTCharts API key</label><input id="key" type="password" autocomplete="off" placeholder="Paste OTCharts key"></div>
+      <div><label for="symbol">Symbol</label><input id="symbol" value="EURUSD_otc" maxlength="32" autocomplete="off"></div>
+      <div><label for="tf">Timeframe</label><select id="tf"><option value="60">M1 · 60 sec</option><option value="120">M2 · 120 sec</option><option value="180">M3 · 180 sec</option><option value="240">M4 · 240 sec</option><option value="300">M5 · 300 sec</option></select></div>
+      <div><label for="limit">Candles</label><select id="limit"><option>60</option><option selected>120</option><option>200</option></select></div>
+      <div><button id="load">LOAD CANDLES</button></div>
+    </div>
+    <div id="status" class="status" role="status">Ready. Enter an OTCharts key and load candles.</div>
+  </section>
+  <section class="panel">
+    <h2>Latest analysis <span id="signal" class="signal WAIT">WAIT</span></h2>
+    <p id="reason" class="muted">No feed loaded yet.</p>
+    <div class="metrics">
+      <div class="metric"><small>Latest close</small><strong id="price">—</strong></div>
+      <div class="metric"><small>RSI (14)</small><strong id="rsi">—</strong></div>
+      <div class="metric"><small>SMA (14)</small><strong id="sma14">—</strong></div>
+      <div class="metric"><small>SMA (30)</small><strong id="sma30">—</strong></div>
+      <div class="metric"><small>Valid candles</small><strong id="count">0</strong></div>
+      <div class="metric"><small>Data provider</small><strong>OTCharts</strong></div>
+    </div>
+  </section>
+  <section class="panel">
+    <h2>Recent candles</h2>
+    <div class="scroll"><table><thead><tr><th>Time</th><th>Open</th><th>High</th><th>Low</th><th>Close</th></tr></thead><tbody id="rows"><tr><td colspan="5" class="muted">No candles yet</td></tr></tbody></table></div>
+  </section>
+  <p class="note">Signals are technical summaries, not financial advice or guaranteed outcomes. OTC prices may differ from Quotex's displayed prices. Verify the provider, symbol, and timestamp before relying on any data.</p>
+</main>
+<script>
+(() => {
+  'use strict';
+  const $ = (id) => document.getElementById(id);
+  const status = (text, error = false) => {
+    $('status').textContent = text;
+    $('status').className = 'status ' + (error ? 'error' : 'good');
+  };
+
+  function extractRows(data) {
+    let rows = data?.candles ?? data?.data?.candles ?? data?.data ?? data?.result ?? data;
+    if (rows && !Array.isArray(rows)) {
+      rows = rows.items ?? rows.history ?? rows.candles ?? [];
+    }
+    if (!Array.isArray(rows)) return [];
+    return rows.map((c) => Array.isArray(c) ? {
+      time: Number(c[0]), open: Number(c[1]), high: Number(c[2]), low: Number(c[3]), close: Number(c[4])
+    } : {
+      time: Number(c.time ?? c.timestamp ?? c.from ?? c.at ?? 0),
+      open: Number(c.open ?? c.o), high: Number(c.high ?? c.max ?? c.h),
+      low: Number(c.low ?? c.min ?? c.l), close: Number(c.close ?? c.price ?? c.c)
+    }).filter((c) => Number.isFinite(c.time) && Number.isFinite(c.open) && Number.isFinite(c.high) && Number.isFinite(c.low) && Number.isFinite(c.close) && c.close > 0)
+      .sort((a, b) => a.time - b.time);
+  }
+
+  function mean(xs) { return xs.reduce((sum, n) => sum + n, 0) / xs.length; }
+  function rsi(closes, period = 14) {
+    if (closes.length <= period) return null;
+    let gains = 0, losses = 0;
+    for (let i = closes.length - period; i < closes.length; i++) {
+      const change = closes[i] - closes[i - 1];
+      if (change > 0) gains += change; else losses -= change;
+    }
+    if (losses === 0) return gains === 0 ? 50 : 100;
+    return 100 - 100 / (1 + gains / losses);
+  }
+  function fmt(n) { return Number.isFinite(n) ? n.toFixed(n > 100 ? 3 : 5) : '—'; }
+  function analyze(candles) {
+    const closes = candles.map(c => c.close);
+    const m14 = closes.length >= 14 ? mean(closes.slice(-14)) : null;
+    const m30 = closes.length >= 30 ? mean(closes.slice(-30)) : null;
+    const momentum = rsi(closes);
+    let up = 0, down = 0;
+    if (m14 !== null && m30 !== null && m14 > m30) up++; else if (m14 !== null && m30 !== null && m14 < m30) down++;
+    if (momentum !== null && momentum > 52 && momentum < 70) up++;
+    else if (momentum !== null && momentum < 48 && momentum > 30) down++;
+    const signal = up >= 2 ? 'CALL' : down >= 2 ? 'PUT' : 'WAIT';
+    $('signal').textContent = signal;
+    $('signal').className = 'signal ' + signal;
+    $('reason').textContent = signal === 'WAIT' ? 'Indicators do not agree strongly enough; no directional signal.' : `${up} bullish vote(s), ${down} bearish vote(s). This is an indicator summary, not a prediction.`;
+    $('price').textContent = fmt(closes.at(-1));
+    $('rsi').textContent = momentum === null ? '—' : momentum.toFixed(2);
+    $('sma14').textContent = fmt(m14);
+    $('sma30').textContent = fmt(m30);
+    $('count').textContent = candles.length;
+    $('rows').replaceChildren(...candles.slice(-30).reverse().map(c => {
+      const tr = document.createElement('tr');
+      const time = c.time > 1e12 ? c.time : c.time * 1000;
+      [new Date(time).toLocaleString(), fmt(c.open), fmt(c.high), fmt(c.low), fmt(c.close)].forEach(value => {
+        const td = document.createElement('td'); td.textContent = value; tr.appendChild(td);
+      });
+      return tr;
+    }));
+  }
+
+  async function load() {
+    const key = $('key').value.trim();
+    const symbol = $('symbol').value.trim();
+    const tf = $('tf').value;
+    const limit = $('limit').value;
+    if (!key) return status('Enter your OTCharts API key. It is only held in memory for this page session.', true);
+    if (!/^[A-Za-z0-9_-]{1,32}$/.test(symbol)) return status('Symbol can contain only letters, numbers, underscores, and hyphens.', true);
+    $('load').disabled = true;
+    status(`Requesting ${symbol} candles from OTCharts...`);
+    const url = new URL('https://otcharts.com/v1/candles');
+    url.search = new URLSearchParams({ venue: 'quotex', symbol, tf, limit }).toString();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch(url, { method: 'GET', mode: 'cors', cache: 'no-store', signal: controller.signal,
+        headers: { Accept: 'application/json', Authorization: `Bearer ${key}` } });
+      const body = await response.text();
+      if (!response.ok) throw new Error(`OTCharts HTTP ${response.status}: ${body.slice(0, 220)}`);
+      let json;
+      try { json = JSON.parse(body); } catch { throw new Error('OTCharts returned a non-JSON response.'); }
+      const candles = extractRows(json);
+      if (candles.length < 25) throw new Error(`Only ${candles.length} valid candles received. Check symbol/key and provider response.`);
+      analyze(candles);
+      status(`Loaded ${candles.length} candles for ${symbol} (${tf}s) directly from OTCharts.`, false);
+    } catch (error) {
+      const msg = error?.name === 'AbortError' ? 'Request timed out.' : error.message;
+      const cors = error instanceof TypeError;
+      status(cors
+        ? `Browser request failed (often CORS or network blocking). GitHub Pages cannot bypass CORS. Ask OTCharts to enable CORS for your Pages origin or use a serverless proxy on a separate host. Details: ${msg}`
+        : msg, true);
+    } finally {
+      clearTimeout(timer);
+      $('load').disabled = false;
+    }
+  }
+  $('load').addEventListener('click', load);
+  $('key').addEventListener('keydown', e => { if (e.key === 'Enter') load(); });
+})();
+</script>
+</body>
+</html>
