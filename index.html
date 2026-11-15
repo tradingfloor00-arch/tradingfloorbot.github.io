@@ -3,25 +3,38 @@
 //| By Darius Kipchoge                                               |
 //+------------------------------------------------------------------+
 #property strict
-#property version   "1.00"
+#property version   "2.00"
 #property description "TRADING FLOOR HFT SCALPER - By Darius Kipchoge"
 
 #include <Trade/Trade.mqh>
 
 CTrade trade;
 
+//+------------------------------------------------------------------+
+//| GENERAL SETTINGS                                                 |
+//+------------------------------------------------------------------+
+
 input group "GENERAL SETTINGS"
 input string InpTradeSymbol = "XAUUSD";
 input ulong InpMagicNumber = 20261103;
-input int InpDeviationPoints = 30;
-input int InpMaximumSpreadPoints = 100;
+input int InpDeviationPoints = 100;
+input int InpMaximumSpreadPoints = 250;
+input double InpAdaptiveSpreadATRPercent = 20.0;
 input int InpStrategyRefreshSeconds = 5;
 input int InpMinimumSecondsBetweenEntries = 5;
+
+//+------------------------------------------------------------------+
+//| TIMEFRAME SETTINGS                                               |
+//+------------------------------------------------------------------+
 
 input group "TIMEFRAME SETTINGS"
 input ENUM_TIMEFRAMES InpTrendTimeframe = PERIOD_M15;
 input ENUM_TIMEFRAMES InpConfirmationTimeframe = PERIOD_M5;
 input ENUM_TIMEFRAMES InpEntryTimeframe = PERIOD_M1;
+
+//+------------------------------------------------------------------+
+//| INDICATOR SETTINGS                                               |
+//+------------------------------------------------------------------+
 
 input group "INDICATOR SETTINGS"
 input int InpFastEMA = 9;
@@ -29,9 +42,13 @@ input int InpSlowEMA = 21;
 input int InpRSIPeriod = 14;
 input int InpATRPeriod = 14;
 
+//+------------------------------------------------------------------+
+//| STRATEGY SETTINGS                                                |
+//+------------------------------------------------------------------+
+
 input group "STRATEGY SETTINGS"
-input int InpMinimumEntryScore = 65;
-input int InpMinimumTrendScore = 50;
+input int InpMinimumEntryScore = 35;
+input int InpMinimumTrendScore = 25;
 input int InpStructureLookback = 30;
 input int InpBreakoutLookback = 20;
 input int InpRetestLookback = 8;
@@ -49,12 +66,20 @@ input bool InpUseCandlestickPatterns = true;
 input bool InpRequireStructure = false;
 input bool InpRequireRetest = false;
 
+//+------------------------------------------------------------------+
+//| LOT SIZE SETTINGS                                                |
+//+------------------------------------------------------------------+
+
 input group "LOT SIZE SETTINGS"
 input bool InpUseFixedLot = true;
 input double InpFixedLot = 0.01;
 input double InpRiskPercent = 1.0;
 input double InpMaximumLot = 0.10;
 input double InpMinimumLot = 0.01;
+
+//+------------------------------------------------------------------+
+//| ADAPTIVE POSITION SETTINGS                                       |
+//+------------------------------------------------------------------+
 
 input group "ADAPTIVE POSITION SETTINGS"
 input bool InpUseAdaptivePositions = true;
@@ -67,6 +92,10 @@ input double InpBalanceTier100 = 100.0;
 input double InpBalanceTier250 = 250.0;
 input double InpBalanceTier500 = 500.0;
 
+//+------------------------------------------------------------------+
+//| STOP LOSS AND TAKE PROFIT                                        |
+//+------------------------------------------------------------------+
+
 input group "STOP LOSS AND TAKE PROFIT"
 input bool InpUseATRStops = true;
 input double InpStopLossATR = 1.5;
@@ -74,14 +103,22 @@ input double InpTakeProfitATR = 2.5;
 input int InpFixedStopLossPoints = 300;
 input int InpFixedTakeProfitPoints = 500;
 
+//+------------------------------------------------------------------+
+//| TRADE MANAGEMENT                                                 |
+//+------------------------------------------------------------------+
+
 input group "TRADE MANAGEMENT"
 input bool InpUseBreakEven = true;
 input double InpBreakEvenTriggerATR = 0.8;
 input int InpBreakEvenOffsetPoints = 10;
 input bool InpCloseOnOppositeSetup = true;
 input bool InpCloseOnReverseSignal = true;
-input int InpTargetHoldSeconds = 30;
-input int InpMaximumHoldSeconds = 60;
+input int InpTargetHoldSeconds = 300;
+input int InpMaximumHoldSeconds = 300;
+
+//+------------------------------------------------------------------+
+//| ACCOUNT PROTECTION                                               |
+//+------------------------------------------------------------------+
 
 input group "ACCOUNT PROTECTION"
 input bool InpUseAccountProtection = true;
@@ -93,8 +130,16 @@ input double InpBasketTakeProfitMoney = 0.0;
 input double InpBasketStopLossMoney = 0.0;
 input int InpStopAfterLossLimit = 0;
 
+//+------------------------------------------------------------------+
+//| DISPLAY SETTINGS                                                 |
+//+------------------------------------------------------------------+
+
 input group "DISPLAY SETTINGS"
 input bool InpShowDashboard = true;
+
+//+------------------------------------------------------------------+
+//| STRATEGY RESULT                                                  |
+//+------------------------------------------------------------------+
 
 struct StrategyResult
 {
@@ -127,10 +172,12 @@ struct StrategyResult
    bool trendConfirmed;
 };
 
+//+------------------------------------------------------------------+
+//| GLOBAL VARIABLES                                                 |
+//+------------------------------------------------------------------+
+
 int g_emaFastHandles[3];
 int g_emaSlowHandles[3];
-int g_rsiHandles[3];
-int g_atrHandles[3];
 
 ENUM_TIMEFRAMES g_timeframes[3];
 
@@ -152,6 +199,12 @@ bool g_tradingPaused = false;
 
 int g_consecutiveLosses = 0;
 
+string g_lastBlockReason = "Initializing";
+
+//+------------------------------------------------------------------+
+//| GOLD SYMBOL VALIDATION                                           |
+//+------------------------------------------------------------------+
+
 bool IsGoldSymbol()
 {
    string symbol = _Symbol;
@@ -165,22 +218,41 @@ bool IsGoldSymbol()
    return false;
 }
 
+//+------------------------------------------------------------------+
+//| PRICE NORMALIZATION                                              |
+//+------------------------------------------------------------------+
+
 double NormalizePrice(double price)
 {
-   int digits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+   int digits = (int)SymbolInfoInteger(
+      _Symbol,
+      SYMBOL_DIGITS
+   );
+
    return NormalizeDouble(price, digits);
 }
+
+//+------------------------------------------------------------------+
+//| CURRENT MARKET TICK                                              |
+//+------------------------------------------------------------------+
 
 bool GetCurrentTick(MqlTick &tick)
 {
    if(!SymbolInfoTick(_Symbol, tick))
       return false;
 
-   if(tick.bid <= 0 || tick.ask <= 0)
+   if(tick.bid <= 0.0 || tick.ask <= 0.0)
+      return false;
+
+   if(tick.ask < tick.bid)
       return false;
 
    return true;
 }
+
+//+------------------------------------------------------------------+
+//| CURRENT SPREAD                                                   |
+//+------------------------------------------------------------------+
 
 int GetCurrentSpread()
 {
@@ -189,50 +261,85 @@ int GetCurrentSpread()
    if(!GetCurrentTick(tick))
       return 999999;
 
-   double point = SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+   double point = SymbolInfoDouble(
+      _Symbol,
+      SYMBOL_POINT
+   );
 
-   if(point <= 0)
+   if(point <= 0.0)
       return 999999;
 
-   return (int)MathRound((tick.ask - tick.bid) / point);
+   return (int)MathCeil(
+      (tick.ask - tick.bid) / point
+   );
 }
+
+//+------------------------------------------------------------------+
+//| TRADING PERMISSION CHECK                                         |
+//+------------------------------------------------------------------+
 
 bool TradingPermissionsAvailable()
 {
    if(!TerminalInfoInteger(TERMINAL_TRADE_ALLOWED))
+   {
+      g_lastBlockReason = "Terminal trading disabled";
       return false;
+   }
 
    if(!MQLInfoInteger(MQL_TRADE_ALLOWED))
+   {
+      g_lastBlockReason = "EA trading disabled";
       return false;
+   }
 
    if(!AccountInfoInteger(ACCOUNT_TRADE_ALLOWED))
+   {
+      g_lastBlockReason = "Account trading disabled";
       return false;
+   }
 
    if(!AccountInfoInteger(ACCOUNT_TRADE_EXPERT))
+   {
+      g_lastBlockReason = "Expert trading not permitted";
       return false;
+   }
 
    return true;
 }
 
+//+------------------------------------------------------------------+
+//| VOLUME NORMALIZATION                                             |
+//+------------------------------------------------------------------+
+
 double NormalizeTradeVolume(double volume)
 {
-   double brokerMinimum =
-      SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
+   double brokerMinimum = SymbolInfoDouble(
+      _Symbol,
+      SYMBOL_VOLUME_MIN
+   );
 
-   double brokerMaximum =
-      SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
+   double brokerMaximum = SymbolInfoDouble(
+      _Symbol,
+      SYMBOL_VOLUME_MAX
+   );
 
-   double volumeStep =
-      SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
+   double volumeStep = SymbolInfoDouble(
+      _Symbol,
+      SYMBOL_VOLUME_STEP
+   );
 
-   if(volumeStep <= 0)
+   if(volumeStep <= 0.0)
       return 0.0;
 
-   double minimumVolume =
-      MathMax(brokerMinimum, InpMinimumLot);
+   double minimumVolume = MathMax(
+      brokerMinimum,
+      InpMinimumLot
+   );
 
-   double maximumVolume =
-      MathMin(brokerMaximum, InpMaximumLot);
+   double maximumVolume = MathMin(
+      brokerMaximum,
+      InpMaximumLot
+   );
 
    if(maximumVolume < minimumVolume)
       return 0.0;
@@ -240,19 +347,33 @@ double NormalizeTradeVolume(double volume)
    volume = MathMax(minimumVolume, volume);
    volume = MathMin(maximumVolume, volume);
 
-   volume = MathFloor(volume / volumeStep) * volumeStep;
+   double steps = MathFloor(
+      (volume - brokerMinimum) / volumeStep + 0.0000001
+   );
 
-   int volumeDigits = 2;
+   volume = brokerMinimum + steps * volumeStep;
 
-   if(volumeStep == 1.0)
-      volumeDigits = 0;
-   else if(volumeStep == 0.1)
-      volumeDigits = 1;
-   else if(volumeStep == 0.001)
-      volumeDigits = 3;
+   volume = MathMax(brokerMinimum, volume);
+
+   if(volume > maximumVolume + 0.0000001)
+      return 0.0;
+
+   int volumeDigits = 0;
+   double stepCheck = volumeStep;
+
+   while(volumeDigits < 8 &&
+         MathAbs(stepCheck - MathRound(stepCheck)) > 0.0000001)
+   {
+      stepCheck *= 10.0;
+      volumeDigits++;
+   }
 
    return NormalizeDouble(volume, volumeDigits);
 }
+
+//+------------------------------------------------------------------+
+//| RESET STRATEGY RESULT                                            |
+//+------------------------------------------------------------------+
 
 void ResetStrategyResult(StrategyResult &result)
 {
@@ -284,7 +405,15 @@ void ResetStrategyResult(StrategyResult &result)
 
    result.trendConfirmed = false;
 }
-bool GetIndicatorValue(int handle, int shift, double &value)
+      //+------------------------------------------------------------------+
+//| INDICATOR VALUE                                                  |
+//+------------------------------------------------------------------+
+
+bool GetIndicatorValue(
+   int handle,
+   int shift,
+   double &value
+)
 {
    if(handle == INVALID_HANDLE)
       return false;
@@ -296,8 +425,13 @@ bool GetIndicatorValue(int handle, int shift, double &value)
       return false;
 
    value = buffer[0];
-   return true;
+
+   return MathIsValidNumber(value);
 }
+
+//+------------------------------------------------------------------+
+//| LOAD CLOSED CANDLES                                              |
+//+------------------------------------------------------------------+
 
 bool LoadRates(
    ENUM_TIMEFRAMES timeframe,
@@ -318,11 +452,20 @@ bool LoadRates(
    return copied >= count;
 }
 
-bool IsSwingHigh(MqlRates &rates[], int index, int depth)
+//+------------------------------------------------------------------+
+//| SWING HIGH                                                       |
+//+------------------------------------------------------------------+
+
+bool IsSwingHigh(
+   MqlRates &rates[],
+   int index,
+   int depth
+)
 {
    int total = ArraySize(rates);
 
-   if(index - depth < 0 || index + depth >= total)
+   if(index - depth < 0 ||
+      index + depth >= total)
       return false;
 
    double high = rates[index].high;
@@ -339,11 +482,20 @@ bool IsSwingHigh(MqlRates &rates[], int index, int depth)
    return true;
 }
 
-bool IsSwingLow(MqlRates &rates[], int index, int depth)
+//+------------------------------------------------------------------+
+//| SWING LOW                                                        |
+//+------------------------------------------------------------------+
+
+bool IsSwingLow(
+   MqlRates &rates[],
+   int index,
+   int depth
+)
 {
    int total = ArraySize(rates);
 
-   if(index - depth < 0 || index + depth >= total)
+   if(index - depth < 0 ||
+      index + depth >= total)
       return false;
 
    double low = rates[index].low;
@@ -359,6 +511,10 @@ bool IsSwingLow(MqlRates &rates[], int index, int depth)
 
    return true;
 }
+
+//+------------------------------------------------------------------+
+//| FIND TWO SWING HIGHS                                             |
+//+------------------------------------------------------------------+
 
 bool GetTwoSwingHighs(
    MqlRates &rates[],
@@ -391,6 +547,10 @@ bool GetTwoSwingHighs(
    return false;
 }
 
+//+------------------------------------------------------------------+
+//| FIND TWO SWING LOWS                                              |
+//+------------------------------------------------------------------+
+
 bool GetTwoSwingLows(
    MqlRates &rates[],
    double &firstLow,
@@ -421,6 +581,10 @@ bool GetTwoSwingLows(
 
    return false;
 }
+
+//+------------------------------------------------------------------+
+//| MARKET STRUCTURE                                                 |
+//+------------------------------------------------------------------+
 
 void DetectMarketStructure(
    MqlRates &rates[],
@@ -461,13 +625,17 @@ void DetectMarketStructure(
       result.structureBearish = true;
 }
 
+//+------------------------------------------------------------------+
+//| SUPPLY AND DEMAND ZONES                                          |
+//+------------------------------------------------------------------+
+
 void DetectSupplyDemand(
    MqlRates &rates[],
    StrategyResult &result,
    double atr
 )
 {
-   if(!InpUseSupplyDemand || atr <= 0)
+   if(!InpUseSupplyDemand || atr <= 0.0)
       return;
 
    int total = ArraySize(rates);
@@ -476,16 +644,19 @@ void DetectSupplyDemand(
       return;
 
    double currentPrice = rates[0].close;
-   double tolerance = atr * InpZoneToleranceATR;
+
+   double tolerance =
+      atr * InpZoneToleranceATR;
 
    double nearestDemandDistance = DBL_MAX;
    double nearestSupplyDistance = DBL_MAX;
 
    for(int i = 2; i < MathMin(total - 1, 25); i++)
    {
-      double candleRange = rates[i].high - rates[i].low;
+      double candleRange =
+         rates[i].high - rates[i].low;
 
-      if(candleRange <= 0)
+      if(candleRange <= 0.0)
          continue;
 
       double body = MathAbs(
@@ -543,13 +714,17 @@ void DetectSupplyDemand(
    }
 }
 
+//+------------------------------------------------------------------+
+//| TRENDLINE APPROXIMATION                                          |
+//+------------------------------------------------------------------+
+
 void DetectTrendline(
    MqlRates &rates[],
    StrategyResult &result,
    double atr
 )
 {
-   if(!InpUseTrendline || atr <= 0)
+   if(!InpUseTrendline || atr <= 0.0)
       return;
 
    double low1, low2;
@@ -577,6 +752,10 @@ void DetectTrendline(
    }
 }
 
+//+------------------------------------------------------------------+
+//| BREAKOUT DETECTION                                               |
+//+------------------------------------------------------------------+
+
 void DetectBreakout(
    MqlRates &rates[],
    StrategyResult &result
@@ -586,9 +765,13 @@ void DetectBreakout(
       return;
 
    int total = ArraySize(rates);
-   int lookback = InpBreakoutLookback;
 
-   if(lookback < 2 || total < lookback + 2)
+   int lookback = MathMax(
+      2,
+      InpBreakoutLookback
+   );
+
+   if(total < lookback + 2)
       return;
 
    double previousHigh = -DBL_MAX;
@@ -614,18 +797,30 @@ void DetectBreakout(
       result.breakoutBearish = true;
 }
 
+//+------------------------------------------------------------------+
+//| BREAKOUT RETEST DETECTION                                        |
+//+------------------------------------------------------------------+
+
 void DetectRetest(
    MqlRates &rates[],
    StrategyResult &result,
    double atr
 )
 {
-   if(!InpUseRetest || atr <= 0)
+   if(!InpUseRetest || atr <= 0.0)
       return;
 
    int total = ArraySize(rates);
-   int lookback = MathMax(2, InpRetestLookback);
-   int breakoutLookback = MathMax(2, InpBreakoutLookback);
+
+   int lookback = MathMax(
+      2,
+      InpRetestLookback
+   );
+
+   int breakoutLookback = MathMax(
+      2,
+      InpBreakoutLookback
+   );
 
    if(total < breakoutLookback + lookback + 3)
       return;
@@ -695,6 +890,10 @@ void DetectRetest(
    }
 }
 
+//+------------------------------------------------------------------+
+//| CANDLESTICK PATTERN DETECTION                                    |
+//+------------------------------------------------------------------+
+
 void DetectCandlestickPattern(
    MqlRates &rates[],
    StrategyResult &result
@@ -731,11 +930,13 @@ void DetectCandlestickPattern(
       rates[0].open >= rates[1].close;
 
    bool bullishPin =
+      body > 0.0 &&
       lowerWick > body * 2.0 &&
       upperWick < body &&
       rates[0].close > rates[0].open;
 
    bool bearishPin =
+      body > 0.0 &&
       upperWick > body * 2.0 &&
       lowerWick < body &&
       rates[0].close < rates[0].open;
@@ -746,12 +947,18 @@ void DetectCandlestickPattern(
    if(bearishEngulfing || bearishPin)
       result.candleBearish = true;
 }
-double CalculateSimpleRSI(
+                   //+------------------------------------------------------------------+
+//| CALCULATE RSI                                                    |
+//+------------------------------------------------------------------+
+
+double CalculateRSI(
    MqlRates &rates[],
    int period
 )
 {
-   if(period < 2 || ArraySize(rates) <= period)
+   int total = ArraySize(rates);
+
+   if(period < 2 || total < period + 2)
       return 50.0;
 
    double gains = 0.0;
@@ -762,46 +969,60 @@ double CalculateSimpleRSI(
       double change =
          rates[i].close - rates[i + 1].close;
 
-      if(change > 0)
+      if(change > 0.0)
          gains += change;
-      else if(change < 0)
+      else
          losses += MathAbs(change);
    }
 
    double averageGain = gains / period;
    double averageLoss = losses / period;
 
-   if(averageLoss == 0.0)
-      return 100.0;
+   if(averageLoss <= 0.0)
+   {
+      if(averageGain <= 0.0)
+         return 50.0;
 
-   if(averageGain == 0.0)
-      return 0.0;
+      return 100.0;
+   }
 
    double rs = averageGain / averageLoss;
 
    return 100.0 - (100.0 / (1.0 + rs));
 }
 
-double CalculateSimpleATR(
+//+------------------------------------------------------------------+
+//| CALCULATE ATR                                                    |
+//+------------------------------------------------------------------+
+
+double CalculateATR(
    MqlRates &rates[],
    int period
 )
 {
-   if(period < 1 || ArraySize(rates) <= period)
+   int total = ArraySize(rates);
+
+   if(period < 2 || total < period + 2)
       return 0.0;
 
    double totalRange = 0.0;
 
    for(int i = 0; i < period; i++)
    {
-      double previousClose = rates[i + 1].close;
+      double highLow =
+         rates[i].high - rates[i].low;
+
+      double highClose = MathAbs(
+         rates[i].high - rates[i + 1].close
+      );
+
+      double lowClose = MathAbs(
+         rates[i].low - rates[i + 1].close
+      );
 
       double trueRange = MathMax(
-         rates[i].high - rates[i].low,
-         MathMax(
-            MathAbs(rates[i].high - previousClose),
-            MathAbs(rates[i].low - previousClose)
-         )
+         highLow,
+         MathMax(highClose, lowClose)
       );
 
       totalRange += trueRange;
@@ -810,6 +1031,10 @@ double CalculateSimpleATR(
    return totalRange / period;
 }
 
+//+------------------------------------------------------------------+
+//| ANALYZE ONE TIMEFRAME                                            |
+//+------------------------------------------------------------------+
+
 bool AnalyzeTimeframe(
    int timeframeIndex,
    StrategyResult &result
@@ -817,172 +1042,189 @@ bool AnalyzeTimeframe(
 {
    ResetStrategyResult(result);
 
-   if(timeframeIndex < 0 || timeframeIndex > 2)
+   if(timeframeIndex < 0 ||
+      timeframeIndex >= 3)
       return false;
 
    ENUM_TIMEFRAMES timeframe =
       g_timeframes[timeframeIndex];
 
    int requiredBars = MathMax(
-      60,
-      InpStructureLookback + InpBreakoutLookback +
-      InpRetestLookback + 15
+      100,
+      InpBreakoutLookback +
+      InpRetestLookback + 40
    );
 
    MqlRates rates[];
 
-   if(!LoadRates(timeframe, requiredBars, rates))
+   if(!LoadRates(
+      timeframe,
+      requiredBars,
+      rates
+   ))
+   {
       return false;
+   }
+
+   int fastHandle =
+      g_emaFastHandles[timeframeIndex];
+
+   int slowHandle =
+      g_emaSlowHandles[timeframeIndex];
 
    double emaFast = 0.0;
    double emaSlow = 0.0;
 
    if(!GetIndicatorValue(
-      g_emaFastHandles[timeframeIndex],
+      fastHandle,
       1,
       emaFast
    ))
       return false;
 
    if(!GetIndicatorValue(
-      g_emaSlowHandles[timeframeIndex],
+      slowHandle,
       1,
       emaSlow
    ))
       return false;
 
-   double rsi = CalculateSimpleRSI(
-      rates,
-      InpRSIPeriod
-   );
-
-   double atr = CalculateSimpleATR(
+   double atr = CalculateATR(
       rates,
       InpATRPeriod
+   );
+
+   double rsi = CalculateRSI(
+      rates,
+      InpRSIPeriod
    );
 
    if(atr <= 0.0)
       return false;
 
-   result.emaFast = emaFast;
-   result.emaSlow = emaSlow;
-   result.rsi = rsi;
    result.atr = atr;
-   result.entry = rates[0].close;
+   result.rsi = rsi;
 
+   double closePrice = rates[0].close;
+
+   // EMA direction
    if(emaFast > emaSlow)
-      result.bullScore++;
+      result.bullishScore++;
 
-   else if(emaFast < emaSlow)
-      result.bearScore++;
+   if(emaFast < emaSlow)
+      result.bearishScore++;
 
-   if(rates[0].close > emaFast)
-      result.bullScore++;
+   // Price relative to fast EMA
+   if(closePrice > emaFast)
+      result.bullishScore++;
 
-   else if(rates[0].close < emaFast)
-      result.bearScore++;
+   if(closePrice < emaFast)
+      result.bearishScore++;
 
-   if(rsi >= 52.0 && rsi <= 72.0)
-      result.bullScore++;
+   // RSI confirmation
+   if(rsi >= 52.0 && rsi <= 75.0)
+      result.bullishScore++;
 
-   else if(rsi >= 28.0 && rsi <= 48.0)
-      result.bearScore++;
+   if(rsi <= 48.0 && rsi >= 25.0)
+      result.bearishScore++;
 
-   if(rates[0].close > rates[1].close)
-      result.bullScore++;
+   // Closed candle direction
+   if(rates[0].close > rates[0].open)
+      result.bullishScore++;
 
-   else if(rates[0].close < rates[1].close)
-      result.bearScore++;
+   if(rates[0].close < rates[0].open)
+      result.bearishScore++;
 
-   double previousHigh = -DBL_MAX;
-   double previousLow = DBL_MAX;
+   // Additional analysis modules
+   DetectMarketStructure(
+      rates,
+      result
+   );
 
-   for(int i = 1; i <= 20; i++)
-   {
-      previousHigh = MathMax(
-         previousHigh,
-         rates[i].high
-      );
+   DetectSupplyDemand(
+      rates,
+      result,
+      atr
+   );
 
-      previousLow = MathMin(
-         previousLow,
-         rates[i].low
-      );
-   }
+   DetectTrendline(
+      rates,
+      result,
+      atr
+   );
 
-   if(rates[0].close > previousHigh)
-      result.bullScore += 2;
+   DetectBreakout(
+      rates,
+      result
+   );
 
-   else if(rates[0].close < previousLow)
-      result.bearScore += 2;
+   DetectRetest(
+      rates,
+      result,
+      atr
+   );
 
-   DetectMarketStructure(rates, result);
+   DetectCandlestickPattern(
+      rates,
+      result
+   );
 
+   // Score market structure
    if(result.structureBullish)
-      result.bullScore += 2;
+      result.bullishScore += 2;
 
    if(result.structureBearish)
-      result.bearScore += 2;
+      result.bearishScore += 2;
 
-   DetectSupplyDemand(rates, result, atr);
-
+   // Score supply and demand
    if(result.demandZone)
-      result.bullScore++;
+      result.bullishScore++;
 
    if(result.supplyZone)
-      result.bearScore++;
+      result.bearishScore++;
 
-   DetectTrendline(rates, result, atr);
-
+   // Score trendline
    if(result.trendlineBullish)
-      result.bullScore++;
+      result.bullishScore++;
 
    if(result.trendlineBearish)
-      result.bearScore++;
+      result.bearishScore++;
 
-   DetectBreakout(rates, result);
-
+   // Score breakout
    if(result.breakoutBullish)
-      result.bullScore += 2;
+      result.bullishScore += 2;
 
    if(result.breakoutBearish)
-      result.bearScore += 2;
+      result.bearishScore += 2;
 
-   DetectRetest(rates, result, atr);
-
+   // Score retest
    if(result.retestBullish)
-      result.bullScore += 2;
+      result.bullishScore += 2;
 
    if(result.retestBearish)
-      result.bearScore += 2;
+      result.bearishScore += 2;
 
-   DetectCandlestickPattern(rates, result);
-
+   // Score candlestick pattern
    if(result.candleBullish)
-      result.bullScore++;
+      result.bullishScore++;
 
    if(result.candleBearish)
-      result.bearScore++;
+      result.bearishScore++;
 
-   int strongestScore = MathMax(
-      result.bullScore,
-      result.bearScore
+   result.score = MathMax(
+      result.bullishScore,
+      result.bearishScore
    );
 
-   result.score = MathMin(
-      100,
-      (int)MathRound(
-         (double)strongestScore / 15.0 * 100.0
-      )
-   );
-
-   if(result.bullScore >= 4 &&
-      result.bullScore >= result.bearScore + 2)
+   if(result.bullishScore >= 4 &&
+      result.bullishScore >=
+      result.bearishScore + 2)
    {
       result.direction = 1;
    }
-   else if(result.bearScore >= 4 &&
-           result.bearScore >= result.bullScore + 2)
+   else if(result.bearishScore >= 4 &&
+           result.bearishScore >=
+           result.bullishScore + 2)
    {
       result.direction = -1;
    }
@@ -991,150 +1233,188 @@ bool AnalyzeTimeframe(
       result.direction = 0;
    }
 
-   if(result.direction == 1)
-   {
-      result.stopLoss =
-         result.entry - atr * InpStopLossATR;
-
-      result.takeProfit =
-         result.entry + atr * InpTakeProfitATR;
-   }
-   else if(result.direction == -1)
-   {
-      result.stopLoss =
-         result.entry + atr * InpStopLossATR;
-
-      result.takeProfit =
-         result.entry - atr * InpTakeProfitATR;
-   }
-
-   result.trendConfirmed =
-      result.direction != 0;
-
    return true;
 }
 
+//+------------------------------------------------------------------+
+//| ANALYZE ALL THREE TIMEFRAMES                                     |
+//+------------------------------------------------------------------+
+
 bool AnalyzeAllTimeframes()
 {
-   if(!AnalyzeTimeframe(0, g_trendResult))
+   ResetStrategyResult(g_trendResult);
+   ResetStrategyResult(g_confirmationResult);
+   ResetStrategyResult(g_entryResult);
+
+   if(!AnalyzeTimeframe(
+      0,
+      g_trendResult
+   ))
+   {
+      g_lastBlockReason =
+         "M15 analysis unavailable";
+
       return false;
+   }
 
-   if(!AnalyzeTimeframe(1, g_confirmationResult))
+   if(!AnalyzeTimeframe(
+      1,
+      g_confirmationResult
+   ))
+   {
+      g_lastBlockReason =
+         "M5 analysis unavailable";
+
       return false;
+   }
 
-   if(!AnalyzeTimeframe(2, g_entryResult))
+   if(!AnalyzeTimeframe(
+      2,
+      g_entryResult
+   ))
+   {
+      g_lastBlockReason =
+         "M1 analysis unavailable";
+
       return false;
-
-   g_currentSignal = 0;
-
-   if(g_trendResult.direction == 1 &&
-      g_confirmationResult.direction == 1 &&
-      g_entryResult.direction == 1)
-   {
-      g_currentSignal = 1;
-   }
-
-   if(g_trendResult.direction == -1 &&
-      g_confirmationResult.direction == -1 &&
-      g_entryResult.direction == -1)
-   {
-      g_currentSignal = -1;
-   }
-
-   if(InpRequireStructure)
-   {
-      if(g_currentSignal == 1 &&
-         !g_confirmationResult.structureBullish)
-      {
-         g_currentSignal = 0;
-      }
-
-      if(g_currentSignal == -1 &&
-         !g_confirmationResult.structureBearish)
-      {
-         g_currentSignal = 0;
-      }
-   }
-
-   if(InpRequireRetest)
-   {
-      if(g_currentSignal == 1 &&
-         !g_entryResult.retestBullish)
-      {
-         g_currentSignal = 0;
-      }
-
-      if(g_currentSignal == -1 &&
-         !g_entryResult.retestBearish)
-      {
-         g_currentSignal = 0;
-      }
-   }
-
-   if(g_currentSignal != 0 &&
-      g_entryResult.score < InpMinimumEntryScore)
-   {
-      g_currentSignal = 0;
-   }
-
-   if(g_currentSignal != 0 &&
-      g_trendResult.score < InpMinimumTrendScore)
-   {
-      g_currentSignal = 0;
-   }
-
-   double weightedScore =
-      g_trendResult.score * 0.25 +
-      g_confirmationResult.score * 0.30 +
-      g_entryResult.score * 0.45;
-
-   if(g_currentSignal != 0 &&
-      weightedScore < InpMinimumEntryScore)
-   {
-      g_currentSignal = 0;
    }
 
    g_currentATR = g_entryResult.atr;
 
-   return true;
-}
-int GetPositionLimit()
-{
-   int limit = InpMaximumPositions;
+   // M15 establishes the primary market direction.
+   int trendDirection =
+      g_trendResult.direction;
 
-   if(InpUseAdaptivePositions)
+   // M5 confirms the primary direction.
+   int confirmationDirection =
+      g_confirmationResult.direction;
+
+   // M1 supplies the entry direction.
+   int entryDirection =
+      g_entryResult.direction;
+
+   if(trendDirection == 0)
    {
-      double balance = AccountInfoDouble(
-         ACCOUNT_BALANCE
-      );
+      g_signalDirection = 0;
 
-      if(balance >= InpBalanceTier500)
-         limit = InpPositionsAt500;
+      g_lastBlockReason =
+         "M15 trend is not clear";
 
-      else if(balance >= InpBalanceTier250)
-         limit = InpPositionsAt250;
-
-      else if(balance >= InpBalanceTier100)
-         limit = InpPositionsAt100;
+      return false;
    }
 
-   double freeMargin = AccountInfoDouble(
-      ACCOUNT_MARGIN_FREE
-   );
+   if(confirmationDirection != trendDirection)
+   {
+      g_signalDirection = 0;
 
-   if(freeMargin < 20.0)
-      limit = 1;
+      g_lastBlockReason =
+         "M5 confirmation disagrees with M15";
 
-   else if(freeMargin < 50.0)
-      limit = MathMin(limit, 2);
+      return false;
+   }
 
-   else if(freeMargin < 100.0)
-      limit = MathMin(limit, 3);
+   if(entryDirection != trendDirection)
+   {
+      g_signalDirection = 0;
 
-   return MathMax(1, limit);
+      g_lastBlockReason =
+         "M1 entry signal is not aligned";
+
+      return false;
+   }
+
+   int combinedScore = 0;
+
+   if(trendDirection == 1)
+   {
+      combinedScore =
+         g_trendResult.bullishScore +
+         g_confirmationResult.bullishScore +
+         g_entryResult.bullishScore;
+   }
+   else
+   {
+      combinedScore =
+         g_trendResult.bearishScore +
+         g_confirmationResult.bearishScore +
+         g_entryResult.bearishScore;
+   }
+
+   int oppositeScore = 0;
+
+   if(trendDirection == 1)
+   {
+      oppositeScore =
+         g_trendResult.bearishScore +
+         g_confirmationResult.bearishScore +
+         g_entryResult.bearishScore;
+   }
+   else
+   {
+      oppositeScore =
+         g_trendResult.bullishScore +
+         g_confirmationResult.bullishScore +
+         g_entryResult.bullishScore;
+   }
+
+   // Minimum confluence requirement.
+   if(combinedScore < InpMinimumEntryScore)
+   {
+      g_signalDirection = 0;
+
+      g_lastBlockReason =
+         "Confluence score below minimum";
+
+      return false;
+   }
+
+   if(combinedScore - oppositeScore <
+      InpMinimumTrendScore)
+   {
+      g_signalDirection = 0;
+
+      g_lastBlockReason =
+         "Opposing market pressure too strong";
+
+      return false;
+   }
+
+   g_signalDirection = trendDirection;
+
+   g_lastSignalScore = combinedScore;
+
+   g_lastBlockReason =
+      trendDirection == 1
+      ? "BUY setup confirmed"
+      : "SELL setup confirmed";
+
+   return true;
+}
+      //+------------------------------------------------------------------+
+//| ADAPTIVE POSITION LIMIT                                          |
+//+------------------------------------------------------------------+
+
+int GetPositionLimit()
+{
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+
+   if(balance >= 100.0)
+      return 12;
+
+   if(balance >= 50.0)
+      return 9;
+
+   if(balance >= 30.0)
+      return 6;
+
+   return 3;
 }
 
-int CountOpenPositions(int direction = 0)
+//+------------------------------------------------------------------+
+//| COUNT OPEN POSITIONS                                             |
+//+------------------------------------------------------------------+
+
+int CountOpenPositions()
 {
    int count = 0;
 
@@ -1145,25 +1425,11 @@ int CountOpenPositions(int direction = 0)
       if(ticket == 0)
          continue;
 
-      if(!PositionSelectByTicket(ticket))
-         continue;
-
       if(PositionGetString(POSITION_SYMBOL) != _Symbol)
          continue;
 
       if((ulong)PositionGetInteger(POSITION_MAGIC) !=
          InpMagicNumber)
-         continue;
-
-      ENUM_POSITION_TYPE type =
-         (ENUM_POSITION_TYPE)PositionGetInteger(
-            POSITION_TYPE
-         );
-
-      if(direction == 1 && type != POSITION_TYPE_BUY)
-         continue;
-
-      if(direction == -1 && type != POSITION_TYPE_SELL)
          continue;
 
       count++;
@@ -1172,18 +1438,19 @@ int CountOpenPositions(int direction = 0)
    return count;
 }
 
+//+------------------------------------------------------------------+
+//| CALCULATE OUR BASKET PROFIT                                      |
+//+------------------------------------------------------------------+
+
 double GetBasketProfit()
 {
-   double totalProfit = 0.0;
+   double profit = 0.0;
 
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong ticket = PositionGetTicket(i);
 
       if(ticket == 0)
-         continue;
-
-      if(!PositionSelectByTicket(ticket))
          continue;
 
       if(PositionGetString(POSITION_SYMBOL) != _Symbol)
@@ -1193,238 +1460,18 @@ double GetBasketProfit()
          InpMagicNumber)
          continue;
 
-      totalProfit +=
-         PositionGetDouble(POSITION_PROFIT);
-
-      totalProfit +=
-         PositionGetDouble(POSITION_SWAP);
+      profit += PositionGetDouble(POSITION_PROFIT);
+      profit += PositionGetDouble(POSITION_SWAP);
    }
 
-   return totalProfit;
+   return profit;
 }
 
-void CloseAllPositions()
-{
-   for(int i = PositionsTotal() - 1; i >= 0; i--)
-   {
-      ulong ticket = PositionGetTicket(i);
+//+------------------------------------------------------------------+
+//| CLOSE ALL OUR POSITIONS                                          |
+//+------------------------------------------------------------------+
 
-      if(ticket == 0)
-         continue;
-
-      if(!PositionSelectByTicket(ticket))
-         continue;
-
-      if(PositionGetString(POSITION_SYMBOL) != _Symbol)
-         continue;
-
-      if((ulong)PositionGetInteger(POSITION_MAGIC) !=
-         InpMagicNumber)
-         continue;
-
-      trade.PositionClose(ticket);
-   }
-}
-
-void CheckAccountProtection()
-{
-   if(!InpUseAccountProtection || g_lossLimitHit)
-      return;
-
-   double equity = AccountInfoDouble(
-      ACCOUNT_EQUITY
-   );
-
-   double balance = AccountInfoDouble(
-      ACCOUNT_BALANCE
-   );
-
-   if(g_startingEquity <= 0.0)
-      g_startingEquity = equity;
-
-   if(equity > g_peakEquity)
-      g_peakEquity = equity;
-
-   double allowedLossPercent =
-      InpMaximumLossPercentBelow100;
-
-   if(balance >= 100.0)
-   {
-      allowedLossPercent =
-         InpMaximumLossPercent100AndAbove;
-   }
-
-   allowedLossPercent = MathMax(
-      0.1,
-      MathMin(allowedLossPercent, 100.0)
-   );
-
-   double maximumLoss =
-      g_startingEquity *
-      allowedLossPercent / 100.0;
-
-   double currentLoss =
-      g_startingEquity - equity;
-
-   if(currentLoss >= maximumLoss)
-   {
-      g_lossLimitHit = true;
-      g_tradingPaused = true;
-
-      if(InpCloseAllAtLossLimit)
-         CloseAllPositions();
-   }
-}
-
-void CheckBasketProtection()
-{
-   if(!InpUseBasketProtection)
-      return;
-
-   double basketProfit = GetBasketProfit();
-
-   if(InpBasketTakeProfitMoney > 0.0 &&
-      basketProfit >= InpBasketTakeProfitMoney)
-   {
-      CloseAllPositions();
-      return;
-   }
-
-   if(InpBasketStopLossMoney > 0.0 &&
-      basketProfit <= -InpBasketStopLossMoney)
-   {
-      CloseAllPositions();
-      return;
-   }
-}
-
-double CalculateTradeVolume(
-   double entryPrice,
-   double stopLoss
-)
-{
-   if(InpUseFixedLot)
-      return NormalizeTradeVolume(InpFixedLot);
-
-   double equity = AccountInfoDouble(
-      ACCOUNT_EQUITY
-   );
-
-   double riskMoney =
-      equity * InpRiskPercent / 100.0;
-
-   double tickSize = SymbolInfoDouble(
-      _Symbol,
-      SYMBOL_TRADE_TICK_SIZE
-   );
-
-   double tickValue = SymbolInfoDouble(
-      _Symbol,
-      SYMBOL_TRADE_TICK_VALUE
-   );
-
-   if(tickSize <= 0.0 || tickValue <= 0.0)
-      return 0.0;
-
-   double stopDistance =
-      MathAbs(entryPrice - stopLoss);
-
-   if(stopDistance <= 0.0)
-      return 0.0;
-
-   double lossPerLot =
-      (stopDistance / tickSize) * tickValue;
-
-   if(lossPerLot <= 0.0)
-      return 0.0;
-
-   double volume = riskMoney / lossPerLot;
-
-   return NormalizeTradeVolume(volume);
-}
-
-bool ValidateStops(
-   int direction,
-   double entry,
-   double &stopLoss,
-   double &takeProfit
-)
-{
-   double point = SymbolInfoDouble(
-      _Symbol,
-      SYMBOL_POINT
-   );
-
-   int stopLevel = (int)SymbolInfoInteger(
-      _Symbol,
-      SYMBOL_TRADE_STOPS_LEVEL
-   );
-
-   double minimumDistance =
-      MathMax(point, stopLevel * point);
-
-   if(direction == 1)
-   {
-      if(stopLoss >= entry ||
-         takeProfit <= entry)
-         return false;
-
-      if(entry - stopLoss < minimumDistance)
-         stopLoss = entry - minimumDistance;
-
-      if(takeProfit - entry < minimumDistance)
-         takeProfit = entry + minimumDistance;
-   }
-   else if(direction == -1)
-   {
-      if(stopLoss <= entry ||
-         takeProfit >= entry)
-         return false;
-
-      if(stopLoss - entry < minimumDistance)
-         stopLoss = entry + minimumDistance;
-
-      if(entry - takeProfit < minimumDistance)
-         takeProfit = entry - minimumDistance;
-   }
-   else
-   {
-      return false;
-   }
-
-   stopLoss = NormalizePrice(stopLoss);
-   takeProfit = NormalizePrice(takeProfit);
-
-   return true;
-}
-
-bool HasEnoughMargin(
-   ENUM_ORDER_TYPE orderType,
-   double volume,
-   double price
-)
-{
-   double requiredMargin = 0.0;
-
-   if(!OrderCalcMargin(
-      orderType,
-      _Symbol,
-      volume,
-      price,
-      requiredMargin
-   ))
-   {
-      return false;
-   }
-
-   double freeMargin = AccountInfoDouble(
-      ACCOUNT_MARGIN_FREE
-   );
-
-   return freeMargin > requiredMargin * 1.2;
-}
-
-bool CloseOppositePositions(int direction)
+bool CloseAllPositions()
 {
    bool allClosed = true;
 
@@ -1435,7 +1482,269 @@ bool CloseOppositePositions(int direction)
       if(ticket == 0)
          continue;
 
-      if(!PositionSelectByTicket(ticket))
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol)
+         continue;
+
+      if((ulong)PositionGetInteger(POSITION_MAGIC) !=
+         InpMagicNumber)
+         continue;
+
+      if(!trade.PositionClose(ticket))
+      {
+         allClosed = false;
+
+         Print(
+            "Position close failed. Ticket: ",
+            ticket,
+            " | ",
+            trade.ResultRetcode(),
+            " | ",
+            trade.ResultRetcodeDescription()
+         );
+      }
+   }
+
+   return allClosed;
+}
+
+//+------------------------------------------------------------------+
+//| ACCOUNT PROTECTION                                               |
+//+------------------------------------------------------------------+
+
+bool CheckAccountProtection()
+{
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+
+   if(g_startingEquity <= 0.0)
+      return false;
+
+   if(equity > g_peakEquity)
+      g_peakEquity = equity;
+
+   double lossPercent =
+      ((g_startingEquity - equity) /
+       g_startingEquity) * 100.0;
+
+   if(InpMaximumAccountLossPercent > 0.0 &&
+      lossPercent >= InpMaximumAccountLossPercent)
+   {
+      g_tradingPaused = true;
+
+      g_lastBlockReason =
+         "Account loss protection activated";
+
+      CloseAllPositions();
+
+      return false;
+   }
+
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| BASKET PROTECTION                                                |
+//+------------------------------------------------------------------+
+
+bool CheckBasketProtection()
+{
+   double basketProfit = GetBasketProfit();
+
+   if(InpMaximumBasketLoss > 0.0 &&
+      basketProfit <= -InpMaximumBasketLoss)
+   {
+      g_lastBlockReason =
+         "Basket loss limit reached";
+
+      CloseAllPositions();
+
+      return false;
+   }
+
+   if(InpMaximumBasketProfit > 0.0 &&
+      basketProfit >= InpMaximumBasketProfit)
+   {
+      g_lastBlockReason =
+         "Basket profit target reached";
+
+      CloseAllPositions();
+
+      return false;
+   }
+
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| CALCULATE TRADE VOLUME                                           |
+//+------------------------------------------------------------------+
+
+double CalculateTradeVolume(double stopDistance)
+{
+   double volume = InpFixedLot;
+
+   if(InpUseRiskBasedLot)
+   {
+      if(stopDistance <= 0.0)
+         return 0.0;
+
+      double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+
+      double riskMoney =
+         equity * InpRiskPercent / 100.0;
+
+      double tickSize =
+         SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_SIZE);
+
+      double tickValue =
+         SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+
+      if(tickSize <= 0.0 || tickValue <= 0.0)
+         return 0.0;
+
+      double lossPerLot =
+         (stopDistance / tickSize) * tickValue;
+
+      if(lossPerLot <= 0.0)
+         return 0.0;
+
+      volume = riskMoney / lossPerLot;
+   }
+
+   volume = MathMin(volume, InpMaximumLot);
+   volume = MathMax(volume, InpMinimumLot);
+
+   return NormalizeTradeVolume(volume);
+}
+
+//+------------------------------------------------------------------+
+//| VALIDATE STOP LOSS AND TAKE PROFIT                               |
+//+------------------------------------------------------------------+
+
+bool ValidateStops(
+   int direction,
+   MqlTick &tick,
+   double &stopLoss,
+   double &takeProfit
+)
+{
+   double point =
+      SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+
+   int digits =
+      (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+
+   if(point <= 0.0)
+      return false;
+
+   int stopsLevel = (int)SymbolInfoInteger(
+      _Symbol,
+      SYMBOL_TRADE_STOPS_LEVEL
+   );
+
+   int freezeLevel = (int)SymbolInfoInteger(
+      _Symbol,
+      SYMBOL_TRADE_FREEZE_LEVEL
+   );
+
+   double minimumDistance =
+      (MathMax(stopsLevel, freezeLevel) + 2) * point;
+
+   if(direction == 1)
+   {
+      double maximumSL = tick.bid - minimumDistance;
+      double minimumTP = tick.bid + minimumDistance;
+
+      if(stopLoss >= maximumSL)
+         stopLoss = maximumSL;
+
+      if(takeProfit <= minimumTP)
+         takeProfit = minimumTP;
+
+      if(stopLoss >= tick.bid ||
+         takeProfit <= tick.bid)
+         return false;
+   }
+   else if(direction == -1)
+   {
+      double minimumSL = tick.ask + minimumDistance;
+      double maximumTP = tick.ask - minimumDistance;
+
+      if(stopLoss <= minimumSL)
+         stopLoss = minimumSL;
+
+      if(takeProfit >= maximumTP)
+         takeProfit = maximumTP;
+
+      if(stopLoss <= tick.ask ||
+         takeProfit >= tick.ask)
+         return false;
+   }
+   else
+   {
+      return false;
+   }
+
+   stopLoss = NormalizeDouble(stopLoss, digits);
+   takeProfit = NormalizeDouble(takeProfit, digits);
+
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| CHECK AVAILABLE MARGIN                                           |
+//+------------------------------------------------------------------+
+
+bool HasEnoughMargin(
+   int direction,
+   double volume
+)
+{
+   MqlTick tick;
+
+   if(!GetCurrentTick(tick))
+      return false;
+
+   ENUM_ORDER_TYPE orderType =
+      direction == 1 ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
+
+   double price =
+      direction == 1 ? tick.ask : tick.bid;
+
+   double requiredMargin = 0.0;
+
+   if(!OrderCalcMargin(
+      orderType,
+      _Symbol,
+      volume,
+      price,
+      requiredMargin
+   ))
+   {
+      Print(
+         "Margin calculation failed: ",
+         GetLastError()
+      );
+
+      return false;
+   }
+
+   double freeMargin =
+      AccountInfoDouble(ACCOUNT_MARGIN_FREE);
+
+   return freeMargin >= requiredMargin * 1.20;
+}
+
+//+------------------------------------------------------------------+
+//| FIND OUR POSITION TICKET                                         |
+//+------------------------------------------------------------------+
+
+ulong FindOwnPositionTicket()
+{
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+
+      if(ticket == 0)
          continue;
 
       if(PositionGetString(POSITION_SYMBOL) != _Symbol)
@@ -1445,231 +1754,543 @@ bool CloseOppositePositions(int direction)
          InpMagicNumber)
          continue;
 
-      ENUM_POSITION_TYPE type =
+      return ticket;
+   }
+
+   return 0;
+}
+
+//+------------------------------------------------------------------+
+//| CLOSE OPPOSITE POSITIONS                                         |
+//+------------------------------------------------------------------+
+
+bool CloseOppositePositions(int direction)
+{
+   bool foundOpposite = false;
+   bool allClosed = true;
+
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+
+      if(ticket == 0)
+         continue;
+
+      if(PositionGetString(POSITION_SYMBOL) != _Symbol)
+         continue;
+
+      if((ulong)PositionGetInteger(POSITION_MAGIC) !=
+         InpMagicNumber)
+         continue;
+
+      ENUM_POSITION_TYPE positionType =
          (ENUM_POSITION_TYPE)PositionGetInteger(
             POSITION_TYPE
          );
 
       bool opposite =
-         (direction == 1 && type == POSITION_TYPE_SELL) ||
-         (direction == -1 && type == POSITION_TYPE_BUY);
+         (direction == 1 &&
+          positionType == POSITION_TYPE_SELL) ||
+         (direction == -1 &&
+          positionType == POSITION_TYPE_BUY);
 
-      if(opposite)
+      if(!opposite)
+         continue;
+
+      foundOpposite = true;
+
+      if(!trade.PositionClose(ticket))
       {
-         if(!trade.PositionClose(ticket))
-            allClosed = false;
+         allClosed = false;
+
+         Print(
+            "Could not close opposite position ",
+            ticket,
+            ": ",
+            trade.ResultRetcodeDescription()
+         );
       }
    }
 
-   return allClosed;
+   if(foundOpposite)
+   {
+      g_lastBlockReason =
+         allClosed
+         ? "Opposite positions closed; waiting for next scan"
+         : "Failed to close all opposite positions";
+
+      return false;
+   }
+
+   return true;
 }
+
+//+------------------------------------------------------------------+
+//| ADAPTIVE SPREAD CHECK                                            |
+//+------------------------------------------------------------------+
+
+bool IsSpreadAcceptable()
+{
+   double spread = GetCurrentSpread();
+
+   if(spread < 0.0)
+      return false;
+
+   double allowedSpread =
+      (double)InpMaximumSpreadPoints;
+
+   if(g_currentATR > 0.0 &&
+      InpAdaptiveSpreadATRPercent > 0.0)
+   {
+      double point =
+         SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+
+      if(point > 0.0)
+      {
+         double atrPoints =
+            g_currentATR / point;
+
+         double adaptiveLimit =
+            atrPoints *
+            InpAdaptiveSpreadATRPercent / 100.0;
+
+         allowedSpread = MathMax(
+            allowedSpread,
+            adaptiveLimit
+         );
+      }
+   }
+
+   if(InpMaximumSpreadPoints <= 0 &&
+      InpAdaptiveSpreadATRPercent <= 0.0)
+      return true;
+
+   if(allowedSpread <= 0.0)
+      return true;
+
+   if(spread > allowedSpread)
+   {
+      g_lastBlockReason =
+         "Spread exceeds adaptive limit";
+
+      return false;
+   }
+
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| EXECUTE MARKET SIGNAL                                            |
+//+------------------------------------------------------------------+
 
 bool ExecuteSignal(int direction)
 {
    if(direction != 1 && direction != -1)
       return false;
 
-   if(g_tradingPaused || g_lossLimitHit)
+   if(g_tradingPaused)
+   {
+      g_lastBlockReason = "Trading is paused";
       return false;
+   }
 
    if(!TradingPermissionsAvailable())
+   {
+      g_lastBlockReason =
+         "Trading permissions unavailable";
+
       return false;
+   }
 
    if(!IsGoldSymbol())
-      return false;
+   {
+      g_lastBlockReason =
+         "Attach EA to a gold chart";
 
-   if(GetCurrentSpread() > InpMaximumSpreadPoints)
+      return false;
+   }
+
+   if(!IsSpreadAcceptable())
       return false;
 
    datetime now = TimeCurrent();
 
    if(g_lastEntryTime > 0 &&
-      now - g_lastEntryTime <
-      InpMinimumSecondsBetweenEntries)
+      now - g_lastEntryTime < InpEntrySpacingSeconds)
    {
-      return false;
-   }
-
-   CheckAccountProtection();
-
-   if(g_tradingPaused || g_lossLimitHit)
-      return false;
-
-   CheckBasketProtection();
-
-   int oppositeCount =
-      direction == 1 ?
-      CountOpenPositions(-1) :
-      CountOpenPositions(1);
-
-   if(oppositeCount > 0)
-   {
-      if(!InpCloseOnOppositeSetup)
-         return false;
-
-      if(!CloseOppositePositions(direction))
-         return false;
+      g_lastBlockReason =
+         "Entry spacing protection";
 
       return false;
    }
 
-   ENUM_ACCOUNT_MARGIN_MODE marginMode =
-      (ENUM_ACCOUNT_MARGIN_MODE)AccountInfoInteger(
-         ACCOUNT_MARGIN_MODE
-      );
-
-   if(marginMode != ACCOUNT_MARGIN_MODE_RETAIL_HEDGING)
-   {
-      if(CountOpenPositions() > 0)
-         return false;
-   }
-
-   int currentPositions = CountOpenPositions();
-
-   if(currentPositions >= GetPositionLimit())
+   if(!CheckAccountProtection())
       return false;
+
+   if(!CheckBasketProtection())
+      return false;
+
+   // Close opposing positions before opening a new direction.
+   if(!CloseOppositePositions(direction))
+      return false;
+
+   int positionLimit = GetPositionLimit();
+
+   if(CountOpenPositions() >= positionLimit)
+   {
+      g_lastBlockReason =
+         "Maximum position limit reached";
+
+      return false;
+   }
 
    MqlTick tick;
 
    if(!GetCurrentTick(tick))
-      return false;
-
-   double entryPrice =
-      direction == 1 ? tick.ask : tick.bid;
-
-   double atr = g_entryResult.atr;
-
-   if(atr <= 0.0)
-      return false;
-
-   double stopLoss = 0.0;
-   double takeProfit = 0.0;
-
-   if(InpUseATRStops)
    {
-      if(direction == 1)
-      {
-         stopLoss =
-            entryPrice - atr * InpStopLossATR;
+      g_lastBlockReason =
+         "Unable to obtain market tick";
 
-         takeProfit =
-            entryPrice + atr * InpTakeProfitATR;
-      }
-      else
-      {
-         stopLoss =
-            entryPrice + atr * InpStopLossATR;
-
-         takeProfit =
-            entryPrice - atr * InpTakeProfitATR;
-      }
-   }
-   else
-   {
-      double point = SymbolInfoDouble(
-         _Symbol,
-         SYMBOL_POINT
-      );
-
-      if(direction == 1)
-      {
-         stopLoss =
-            entryPrice -
-            InpFixedStopLossPoints * point;
-
-         takeProfit =
-            entryPrice +
-            InpFixedTakeProfitPoints * point;
-      }
-      else
-      {
-         stopLoss =
-            entryPrice +
-            InpFixedStopLossPoints * point;
-
-         takeProfit =
-            entryPrice -
-            InpFixedTakeProfitPoints * point;
-      }
-   }
-
-   if(!ValidateStops(
-      direction,
-      entryPrice,
-      stopLoss,
-      takeProfit
-   ))
-   {
       return false;
    }
 
-   double volume = CalculateTradeVolume(
-      entryPrice,
-      stopLoss
-   );
+   if(g_currentATR <= 0.0)
+   {
+      g_lastBlockReason =
+         "ATR unavailable";
+
+      return false;
+   }
+
+   double point =
+      SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+
+   if(point <= 0.0)
+      return false;
+
+   double stopDistance =
+      g_currentATR * InpStopLossATR;
+
+   double targetDistance =
+      g_currentATR * InpTakeProfitATR;
+
+   if(stopDistance <= 0.0 ||
+      targetDistance <= 0.0)
+      return false;
+
+   double volume =
+      CalculateTradeVolume(stopDistance);
 
    if(volume <= 0.0)
-      return false;
-
-   ENUM_ORDER_TYPE orderType =
-      direction == 1 ?
-      ORDER_TYPE_BUY :
-      ORDER_TYPE_SELL;
-
-   if(!HasEnoughMargin(
-      orderType,
-      volume,
-      entryPrice
-   ))
    {
+      g_lastBlockReason =
+         "Invalid trade volume";
+
+      return false;
+   }
+
+   if(!HasEnoughMargin(direction, volume))
+   {
+      g_lastBlockReason =
+         "Insufficient free margin";
+
       return false;
    }
 
    trade.SetExpertMagicNumber(InpMagicNumber);
-   trade.SetDeviationInPoints(InpDeviationPoints);
-   trade.SetTypeFillingBySymbol(_Symbol);
    trade.SetAsyncMode(false);
+   trade.SetTypeFillingBySymbol(_Symbol);
+   trade.SetDeviationInPoints(
+      (ulong)MathMax(1, InpDeviationPoints)
+   );
 
-   bool orderPlaced = false;
+   // Submit market order using the current market price.
+   bool orderSent = false;
 
    if(direction == 1)
    {
-      orderPlaced = trade.Buy(
+      orderSent = trade.Buy(
          volume,
          _Symbol,
          0.0,
-         stopLoss,
-         takeProfit,
-         "TRADING FLOOR BUY"
+         0.0,
+         0.0,
+         "TRADING FLOOR HFT BUY"
       );
    }
    else
    {
-      orderPlaced = trade.Sell(
+      orderSent = trade.Sell(
          volume,
          _Symbol,
          0.0,
-         stopLoss,
-         takeProfit,
-         "TRADING FLOOR SELL"
+         0.0,
+         0.0,
+         "TRADING FLOOR HFT SELL"
       );
    }
 
-   if(orderPlaced)
+   if(!orderSent)
    {
-      uint retcode = trade.ResultRetcode();
+      g_lastBlockReason =
+         "Market order rejected";
 
-      if(retcode == TRADE_RETCODE_DONE ||
-         retcode == TRADE_RETCODE_PLACED ||
-         retcode == TRADE_RETCODE_DONE_PARTIAL)
+      Print(
+         "Market order failed: ",
+         trade.ResultRetcode(),
+         " | ",
+         trade.ResultRetcodeDescription()
+      );
+
+      return false;
+   }
+
+   // Locate the position created by this EA.
+   ulong ticket = FindOwnPositionTicket();
+
+   if(ticket == 0)
+   {
+      g_lastBlockReason =
+         "Order sent but position ticket not found";
+
+      Print(
+         "Order result: ",
+         trade.ResultRetcode(),
+         " | ",
+         trade.ResultRetcodeDescription()
+      );
+
+      return false;
+   }
+
+   if(!PositionSelectByTicket(ticket))
+      return false;
+
+   double actualEntry =
+      PositionGetDouble(POSITION_PRICE_OPEN);
+
+   double stopLoss = 0.0;
+   double takeProfit = 0.0;
+
+   if(direction == 1)
+   {
+      stopLoss =
+         actualEntry - stopDistance;
+
+      takeProfit =
+         actualEntry + targetDistance;
+   }
+   else
+   {
+      stopLoss =
+         actualEntry + stopDistance;
+
+      takeProfit =
+         actualEntry - targetDistance;
+   }
+
+   // Refresh quote before validating broker stop distances.
+   if(!GetCurrentTick(tick))
+   {
+      trade.PositionClose(ticket);
+
+      g_lastBlockReason =
+         "Unable to validate protection prices";
+
+      return false;
+   }
+
+   if(!ValidateStops(
+      direction,
+      tick,
+      stopLoss,
+      takeProfit
+   ))
+   {
+      trade.PositionClose(ticket);
+
+      g_lastBlockReason =
+         "Invalid stop or target; position closed";
+
+      return false;
+   }
+
+   // Protect the position immediately after execution.
+   bool protectionApplied = trade.PositionModify(
+      ticket,
+      stopLoss,
+      takeProfit
+   );
+
+   if(!protectionApplied)
+   {
+      Print(
+         "Stop/target modification failed: ",
+         trade.ResultRetcode(),
+         " | ",
+         trade.ResultRetcodeDescription()
+      );
+
+      // Do not intentionally leave an unprotected trade open.
+      bool closed = trade.PositionClose(ticket);
+
+      g_lastBlockReason =
+         closed
+         ? "Protection failed; position closed"
+         : "CRITICAL: protection failed and close failed";
+
+      return false;
+   }
+
+   g_lastEntryTime = TimeCurrent();
+
+   g_lastBlockReason =
+      direction == 1
+      ? "BUY executed and protected"
+      : "SELL executed and protected";
+
+   Print(
+      "TRADE OPENED | ",
+      direction == 1 ? "BUY" : "SELL",
+      " | Volume: ",
+      volume,
+      " | Entry: ",
+      actualEntry,
+      " | SL: ",
+      stopLoss,
+      " | TP: ",
+      takeProfit
+   );
+
+   return true;
+}
+      //+------------------------------------------------------------------+
+//| CREATE INDICATOR HANDLES                                         |
+//+------------------------------------------------------------------+
+
+bool CreateIndicatorHandles()
+{
+   for(int i = 0; i < 3; i++)
+   {
+      g_emaFastHandles[i] = iMA(
+         _Symbol,
+         g_timeframes[i],
+         9,
+         0,
+         MODE_EMA,
+         PRICE_CLOSE
+      );
+
+      g_emaSlowHandles[i] = iMA(
+         _Symbol,
+         g_timeframes[i],
+         21,
+         0,
+         MODE_EMA,
+         PRICE_CLOSE
+      );
+
+      if(g_emaFastHandles[i] == INVALID_HANDLE ||
+         g_emaSlowHandles[i] == INVALID_HANDLE)
       {
-         g_lastEntryTime = now;
-         return true;
+         Print(
+            "Failed to create EMA handles for timeframe ",
+            EnumToString(g_timeframes[i]),
+            " | Error: ",
+            GetLastError()
+         );
+
+         return false;
       }
    }
 
-   return false;
+   return true;
 }
+
+//+------------------------------------------------------------------+
+//| RELEASE INDICATOR HANDLES                                        |
+//+------------------------------------------------------------------+
+
+void ReleaseIndicatorHandles()
+{
+   for(int i = 0; i < 3; i++)
+   {
+      if(g_emaFastHandles[i] != INVALID_HANDLE)
+      {
+         IndicatorRelease(g_emaFastHandles[i]);
+         g_emaFastHandles[i] = INVALID_HANDLE;
+      }
+
+      if(g_emaSlowHandles[i] != INVALID_HANDLE)
+      {
+         IndicatorRelease(g_emaSlowHandles[i]);
+         g_emaSlowHandles[i] = INVALID_HANDLE;
+      }
+   }
+}
+
+//+------------------------------------------------------------------+
+//| VALIDATE INPUTS                                                  |
+//+------------------------------------------------------------------+
+
+bool ValidateInputs()
+{
+   if(InpFastEMAPeriod < 2 ||
+      InpSlowEMAPeriod <= InpFastEMAPeriod)
+   {
+      Print("Invalid EMA settings.");
+      return false;
+   }
+
+   if(InpRSIPeriod < 2 || InpATRPeriod < 2)
+   {
+      Print("Invalid RSI or ATR period.");
+      return false;
+   }
+
+   if(InpMinimumEntryScore < 1 ||
+      InpMinimumTrendScore < 1)
+   {
+      Print("Invalid signal score settings.");
+      return false;
+   }
+
+   if(InpRiskPercent <= 0.0 ||
+      InpRiskPercent > 10.0)
+   {
+      Print("Risk percentage must be above 0 and no more than 10.");
+      return false;
+   }
+
+   if(InpMinimumLot <= 0.0 ||
+      InpMaximumLot < InpMinimumLot)
+   {
+      Print("Invalid lot size settings.");
+      return false;
+   }
+
+   if(InpFixedLot <= 0.0 ||
+      InpStopLossATR <= 0.0 ||
+      InpTakeProfitATR <= 0.0)
+   {
+      Print("Invalid lot, stop loss or take profit settings.");
+      return false;
+   }
+
+   if(InpRefreshSeconds < 1 ||
+      InpEntrySpacingSeconds < 0)
+   {
+      Print("Invalid scan or entry timing settings.");
+      return false;
+   }
+
+   return true;
+}
+
+//+------------------------------------------------------------------+
+//| BREAK-EVEN MANAGEMENT                                            |
+//+------------------------------------------------------------------+
+
 void ManageBreakEven()
 {
    if(!InpUseBreakEven)
@@ -1683,19 +2304,20 @@ void ManageBreakEven()
    if(!GetCurrentTick(tick))
       return;
 
-   double point = SymbolInfoDouble(
-      _Symbol,
-      SYMBOL_POINT
-   );
+   double point =
+      SymbolInfoDouble(_Symbol, SYMBOL_POINT);
+
+   if(point <= 0.0)
+      return;
+
+   int digits =
+      (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
 
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong ticket = PositionGetTicket(i);
 
       if(ticket == 0)
-         continue;
-
-      if(!PositionSelectByTicket(ticket))
          continue;
 
       if(PositionGetString(POSITION_SYMBOL) != _Symbol)
@@ -1719,30 +2341,42 @@ void ManageBreakEven()
       double currentTP =
          PositionGetDouble(POSITION_TP);
 
+      double triggerDistance =
+         g_currentATR * 1.0;
+
+      double offset =
+         2.0 * point;
+
       if(type == POSITION_TYPE_BUY)
       {
          double profitDistance =
             tick.bid - openPrice;
 
-         if(profitDistance <
-            g_currentATR * InpBreakEvenTriggerATR)
-         {
+         if(profitDistance < triggerDistance)
             continue;
-         }
 
          double newSL =
-            openPrice +
-            InpBreakEvenOffsetPoints * point;
-
-         newSL = NormalizePrice(newSL);
+            NormalizeDouble(
+               openPrice + offset,
+               digits
+            );
 
          if(currentSL == 0.0 || newSL > currentSL)
          {
-            trade.PositionModify(
-               ticket,
-               newSL,
-               currentTP
-            );
+            if(newSL < tick.bid)
+            {
+               if(!trade.PositionModify(
+                  ticket,
+                  newSL,
+                  currentTP
+               ))
+               {
+                  Print(
+                     "BUY break-even failed: ",
+                     trade.ResultRetcodeDescription()
+                  );
+               }
+            }
          }
       }
       else if(type == POSITION_TYPE_SELL)
@@ -1750,49 +2384,45 @@ void ManageBreakEven()
          double profitDistance =
             openPrice - tick.ask;
 
-         if(profitDistance <
-            g_currentATR * InpBreakEvenTriggerATR)
-         {
+         if(profitDistance < triggerDistance)
             continue;
-         }
 
          double newSL =
-            openPrice -
-            InpBreakEvenOffsetPoints * point;
-
-         newSL = NormalizePrice(newSL);
+            NormalizeDouble(
+               openPrice - offset,
+               digits
+            );
 
          if(currentSL == 0.0 || newSL < currentSL)
          {
-            trade.PositionModify(
-               ticket,
-               newSL,
-               currentTP
-            );
+            if(newSL > tick.ask)
+            {
+               if(!trade.PositionModify(
+                  ticket,
+                  newSL,
+                  currentTP
+               ))
+               {
+                  Print(
+                     "SELL break-even failed: ",
+                     trade.ResultRetcodeDescription()
+                  );
+               }
+            }
          }
       }
    }
 }
 
+//+------------------------------------------------------------------+
+//| POSITION TIME MANAGEMENT                                         |
+//+------------------------------------------------------------------+
+
 void ManagePositionTime()
 {
-   static ulong lastAttemptTicket = 0;
-   static datetime lastAttemptTime = 0;
-
-   int targetSeconds = MathMax(
-      1,
-      InpTargetHoldSeconds
-   );
-
-   int maximumSeconds = MathMax(
-      targetSeconds,
-      InpMaximumHoldSeconds
-   );
-
-   maximumSeconds = MathMin(
-      maximumSeconds,
-      60
-   );
+   // Absolute safety limit: positions cannot intentionally remain
+   // open beyond five minutes under this EA's time management.
+   const int maximumHoldingSeconds = 300;
 
    datetime now = TimeCurrent();
 
@@ -1801,9 +2431,6 @@ void ManagePositionTime()
       ulong ticket = PositionGetTicket(i);
 
       if(ticket == 0)
-         continue;
-
-      if(!PositionSelectByTicket(ticket))
          continue;
 
       if(PositionGetString(POSITION_SYMBOL) != _Symbol)
@@ -1816,378 +2443,187 @@ void ManagePositionTime()
       datetime openTime =
          (datetime)PositionGetInteger(POSITION_TIME);
 
-      int heldSeconds = (int)(now - openTime);
+      if(openTime <= 0)
+         continue;
 
-      ENUM_POSITION_TYPE type =
-         (ENUM_POSITION_TYPE)PositionGetInteger(
-            POSITION_TYPE
+      int heldSeconds =
+         (int)(now - openTime);
+
+      if(heldSeconds >= maximumHoldingSeconds)
+      {
+         Print(
+            "Maximum holding time reached. Closing ticket ",
+            ticket
          );
 
-      bool reverseSignal = false;
-
-      if(InpCloseOnReverseSignal)
-      {
-         if(type == POSITION_TYPE_BUY &&
-            g_currentSignal == -1)
+         if(!trade.PositionClose(ticket))
          {
-            reverseSignal = true;
+            Print(
+               "Timed position close failed: ",
+               trade.ResultRetcode(),
+               " | ",
+               trade.ResultRetcodeDescription()
+            );
          }
-
-         if(type == POSITION_TYPE_SELL &&
-            g_currentSignal == 1)
-         {
-            reverseSignal = true;
-         }
-      }
-
-      bool timeExpired =
-         heldSeconds >= targetSeconds;
-
-      bool maximumTimeExpired =
-         heldSeconds >= maximumSeconds;
-
-      if(reverseSignal ||
-         timeExpired ||
-         maximumTimeExpired)
-      {
-         if(ticket == lastAttemptTicket &&
-            now - lastAttemptTime < 1)
-         {
-            continue;
-         }
-
-         lastAttemptTicket = ticket;
-         lastAttemptTime = now;
-
-         trade.PositionClose(ticket);
       }
    }
 }
 
-void ManageOpenPositions()
-{
-   ManageBreakEven();
-   ManagePositionTime();
-
-   CheckBasketProtection();
-   CheckAccountProtection();
-}
+//+------------------------------------------------------------------+
+//| UPDATE DASHBOARD                                                 |
+//+------------------------------------------------------------------+
 
 void UpdateDashboard()
 {
-   if(!InpShowDashboard)
-   {
-      Comment("");
-      return;
-   }
+   MqlTick tick;
 
-   string signalText = "WAIT";
+   double currentPrice = 0.0;
 
-   if(g_currentSignal == 1)
-      signalText = "BUY";
+   if(GetCurrentTick(tick))
+      currentPrice = tick.bid;
 
-   if(g_currentSignal == -1)
-      signalText = "SELL";
+   double spread = GetCurrentSpread();
 
-   string trendText = "WAIT";
-   string confirmationText = "WAIT";
-   string entryText = "WAIT";
+   double basketProfit = GetBasketProfit();
 
-   if(g_trendResult.direction == 1)
-      trendText = "BUY";
+   int positions = CountOpenPositions();
 
-   else if(g_trendResult.direction == -1)
-      trendText = "SELL";
+   string direction = "WAIT";
 
-   if(g_confirmationResult.direction == 1)
-      confirmationText = "BUY";
+   if(g_signalDirection == 1)
+      direction = "BUY";
 
-   else if(g_confirmationResult.direction == -1)
-      confirmationText = "SELL";
+   if(g_signalDirection == -1)
+      direction = "SELL";
 
-   if(g_entryResult.direction == 1)
-      entryText = "BUY";
-
-   else if(g_entryResult.direction == -1)
-      entryText = "SELL";
-
-   string accountMode = "NETTING";
-
-   if(AccountInfoInteger(ACCOUNT_MARGIN_MODE) ==
-      ACCOUNT_MARGIN_MODE_RETAIL_HEDGING)
-   {
-      accountMode = "HEDGING";
-   }
-
-   string status = "ACTIVE";
-
-   if(g_tradingPaused || g_lossLimitHit)
-      status = "PAUSED";
+   string tradingStatus =
+      g_tradingPaused ? "PAUSED" : "ACTIVE";
 
    string dashboard =
       "\n"
       "====================================\n"
-      "\n"
-      "       TRADING FLOOR HFT SCALPER\n"
-      "          BY DARIUS KIPCHOGE\n"
-      "\n"
+      " TRADING FLOOR HFT SCALPER\n"
+      " By Darius Kipchoge\n"
       "====================================\n"
-      "\n"
       "SYMBOL: " + _Symbol + "\n" +
-      "STATUS: " + status + "\n" +
-      "ACCOUNT MODE: " + accountMode + "\n" +
-      "SIGNAL: " + signalText + "\n" +
-      "\n"
-      "M15 TREND: " + trendText + "\n" +
-      "M5 CONFIRMATION: " + confirmationText + "\n" +
-      "M1 ENTRY: " + entryText + "\n" +
-      "\n"
-      "M15 SCORE: " +
-      IntegerToString(g_trendResult.score) + "\n" +
-      "M5 SCORE: " +
-      IntegerToString(g_confirmationResult.score) + "\n" +
-      "M1 SCORE: " +
-      IntegerToString(g_entryResult.score) + "\n" +
-      "\n"
-      "RSI: " +
-      DoubleToString(g_entryResult.rsi, 2) + "\n" +
-      "ATR: " +
-      DoubleToString(g_entryResult.atr, 3) + "\n" +
+      "STATUS: " + tradingStatus + "\n" +
+      "PRICE: " +
+      DoubleToString(
+         currentPrice,
+         _Digits
+      ) + "\n" +
       "SPREAD: " +
-      IntegerToString(GetCurrentSpread()) + "\n" +
-      "\n"
+      DoubleToString(spread, 1) +
+      " points\n" +
+      "SIGNAL: " + direction + "\n" +
+      "SIGNAL SCORE: " +
+      IntegerToString(g_lastSignalScore) + "\n" +
+      "M15 DIRECTION: " +
+      IntegerToString(g_trendResult.direction) + "\n" +
+      "M5 DIRECTION: " +
+      IntegerToString(g_confirmationResult.direction) + "\n" +
+      "M1 DIRECTION: " +
+      IntegerToString(g_entryResult.direction) + "\n" +
       "OPEN POSITIONS: " +
-      IntegerToString(CountOpenPositions()) + "\n" +
-      "POSITION LIMIT: " +
+      IntegerToString(positions) + "/" +
       IntegerToString(GetPositionLimit()) + "\n" +
       "BASKET P/L: " +
-      DoubleToString(GetBasketProfit(), 2) + "\n" +
-      "EQUITY: " +
+      DoubleToString(basketProfit, 2) + "\n" +
+      "ACCOUNT EQUITY: " +
       DoubleToString(
          AccountInfoDouble(ACCOUNT_EQUITY),
          2
       ) + "\n" +
-      "\n"
-      "====================================\n";
+      "MAX HOLD: 300 SECONDS\n" +
+      "SCAN INTERVAL: " +
+      IntegerToString(InpRefreshSeconds) +
+      " SECONDS\n" +
+      "LAST STATUS: " +
+      g_lastBlockReason + "\n" +
+      "====================================";
 
    Comment(dashboard);
 }
 
-bool CreateIndicatorHandles()
-{
-   g_timeframes[0] = InpTrendTimeframe;
-   g_timeframes[1] = InpConfirmationTimeframe;
-   g_timeframes[2] = InpEntryTimeframe;
-
-   for(int i = 0; i < 3; i++)
-   {
-      g_emaFastHandles[i] = iMA(
-         _Symbol,
-         g_timeframes[i],
-         InpFastEMA,
-         0,
-         MODE_EMA,
-         PRICE_CLOSE
-      );
-
-      g_emaSlowHandles[i] = iMA(
-         _Symbol,
-         g_timeframes[i],
-         InpSlowEMA,
-         0,
-         MODE_EMA,
-         PRICE_CLOSE
-      );
-
-      g_rsiHandles[i] = iRSI(
-         _Symbol,
-         g_timeframes[i],
-         InpRSIPeriod,
-         PRICE_CLOSE
-      );
-
-      g_atrHandles[i] = iATR(
-         _Symbol,
-         g_timeframes[i],
-         InpATRPeriod
-      );
-
-      if(g_emaFastHandles[i] == INVALID_HANDLE ||
-         g_emaSlowHandles[i] == INVALID_HANDLE ||
-         g_rsiHandles[i] == INVALID_HANDLE ||
-         g_atrHandles[i] == INVALID_HANDLE)
-      {
-         return false;
-      }
-   }
-
-   return true;
-}
-
-void ReleaseIndicatorHandles()
-{
-   for(int i = 0; i < 3; i++)
-   {
-      if(g_emaFastHandles[i] != INVALID_HANDLE)
-         IndicatorRelease(g_emaFastHandles[i]);
-
-      if(g_emaSlowHandles[i] != INVALID_HANDLE)
-         IndicatorRelease(g_emaSlowHandles[i]);
-
-      if(g_rsiHandles[i] != INVALID_HANDLE)
-         IndicatorRelease(g_rsiHandles[i]);
-
-      if(g_atrHandles[i] != INVALID_HANDLE)
-         IndicatorRelease(g_atrHandles[i]);
-
-      g_emaFastHandles[i] = INVALID_HANDLE;
-      g_emaSlowHandles[i] = INVALID_HANDLE;
-      g_rsiHandles[i] = INVALID_HANDLE;
-      g_atrHandles[i] = INVALID_HANDLE;
-   }
-}
-
-bool ValidateInputs()
-{
-   if(InpFastEMA < 1 ||
-      InpSlowEMA <= InpFastEMA ||
-      InpRSIPeriod < 2 ||
-      InpATRPeriod < 1)
-   {
-      Print("Invalid indicator settings.");
-      return false;
-   }
-
-   if(InpMinimumEntryScore < 1 ||
-      InpMinimumEntryScore > 100)
-   {
-      Print("Invalid minimum entry score.");
-      return false;
-   }
-
-   if(InpMinimumTrendScore < 1 ||
-      InpMinimumTrendScore > 100)
-   {
-      Print("Invalid minimum trend score.");
-      return false;
-   }
-
-   if(InpFixedLot <= 0.0 ||
-      InpMaximumLot <= 0.0 ||
-      InpMinimumLot <= 0.0 ||
-      InpMinimumLot > InpMaximumLot)
-   {
-      Print("Invalid lot size settings.");
-      return false;
-   }
-
-   if(InpRiskPercent <= 0.0 ||
-      InpRiskPercent > 100.0)
-   {
-      Print("Invalid risk percentage.");
-      return false;
-   }
-
-   if(InpStopLossATR <= 0.0 ||
-      InpTakeProfitATR <= 0.0)
-   {
-      Print("Invalid ATR stop settings.");
-      return false;
-   }
-
-   if(InpTargetHoldSeconds < 1 ||
-      InpMaximumHoldSeconds < 1)
-   {
-      Print("Invalid holding time settings.");
-      return false;
-   }
-
-   if(InpStrategyRefreshSeconds < 1 ||
-      InpMinimumSecondsBetweenEntries < 0)
-   {
-      Print("Invalid strategy timing settings.");
-      return false;
-   }
-
-   if(InpMaximumPositions < 1)
-   {
-      Print("Maximum positions must be at least 1.");
-      return false;
-   }
-
-   return true;
-}
+//+------------------------------------------------------------------+
+//| EXPERT INITIALIZATION                                            |
+//+------------------------------------------------------------------+
 
 int OnInit()
 {
+   if(!ValidateInputs())
+      return INIT_PARAMETERS_INCORRECT;
+
    if(!IsGoldSymbol())
    {
       Print(
-         "TRADING FLOOR HFT SCALPER is designed for XAUUSD only."
+         "TRADING FLOOR HFT SCALPER is gold-only. ",
+         "Attach it to an XAUUSD or GOLD chart."
       );
 
       return INIT_FAILED;
    }
 
-   if(!ValidateInputs())
-      return INIT_PARAMETERS_INCORRECT;
+   trade.SetExpertMagicNumber(InpMagicNumber);
 
-   for(int i = 0; i < 3; i++)
-   {
-      g_emaFastHandles[i] = INVALID_HANDLE;
-      g_emaSlowHandles[i] = INVALID_HANDLE;
-      g_rsiHandles[i] = INVALID_HANDLE;
-      g_atrHandles[i] = INVALID_HANDLE;
-   }
+   trade.SetDeviationInPoints(
+      (ulong)MathMax(1, InpDeviationPoints)
+   );
+
+   trade.SetTypeFillingBySymbol(_Symbol);
+
+   trade.SetAsyncMode(false);
+
+   g_startingEquity =
+      AccountInfoDouble(ACCOUNT_EQUITY);
+
+   g_peakEquity = g_startingEquity;
+
+   g_currentATR = 0.0;
+   g_signalDirection = 0;
+   g_lastSignalScore = 0;
+   g_tradingPaused = false;
+
+   g_lastEntryTime = 0;
+   g_lastAnalysisTime = 0;
+
+   g_lastBlockReason = "Initializing";
 
    if(!CreateIndicatorHandles())
    {
-      Print("Failed to create indicator handles.");
+      ReleaseIndicatorHandles();
+
+      return INIT_FAILED;
+   }
+
+   if(!EventSetTimer(1))
+   {
+      Print(
+         "Timer initialization failed: ",
+         GetLastError()
+      );
 
       ReleaseIndicatorHandles();
 
       return INIT_FAILED;
    }
 
-   trade.SetExpertMagicNumber(InpMagicNumber);
-   trade.SetDeviationInPoints(InpDeviationPoints);
-   trade.SetTypeFillingBySymbol(_Symbol);
-   trade.SetAsyncMode(false);
-
-   g_startingEquity = AccountInfoDouble(
-      ACCOUNT_EQUITY
-   );
-
-   g_peakEquity = g_startingEquity;
-
-   g_lastStrategyRefresh = 0;
-   g_lastEntryTime = 0;
-
-   g_currentSignal = 0;
-   g_currentATR = 0.0;
-
-   g_lossLimitHit = false;
-   g_tradingPaused = false;
-
-   ResetStrategyResult(g_trendResult);
-   ResetStrategyResult(g_confirmationResult);
-   ResetStrategyResult(g_entryResult);
-
-   EventSetTimer(1);
-
    Print(
-      "TRADING FLOOR HFT SCALPER initialized successfully."
-   );
-
-   Print(
-      "Symbol: ",
+      "TRADING FLOOR HFT SCALPER initialized on ",
       _Symbol,
-      " | Magic: ",
-      InpMagicNumber
+      ". Maximum holding time: 300 seconds."
    );
+
+   g_lastBlockReason = "EA initialized successfully";
+
+   UpdateDashboard();
 
    return INIT_SUCCEEDED;
 }
+
+//+------------------------------------------------------------------+
+//| EXPERT DEINITIALIZATION                                          |
+//+------------------------------------------------------------------+
 
 void OnDeinit(const int reason)
 {
@@ -2203,126 +2639,139 @@ void OnDeinit(const int reason)
    );
 }
 
+//+------------------------------------------------------------------+
+//| TIMER EVENT                                                      |
+//+------------------------------------------------------------------+
+
 void OnTimer()
 {
+   // Manage open positions on the one-second timer as well.
+   ManagePositionTime();
+
+   ManageBreakEven();
+
+   if(!CheckAccountProtection())
+   {
+      UpdateDashboard();
+      return;
+   }
+
+   if(!CheckBasketProtection())
+   {
+      UpdateDashboard();
+      return;
+   }
+
+   if(g_tradingPaused)
+   {
+      UpdateDashboard();
+      return;
+   }
+
+   datetime now = TimeCurrent();
+
+   if(g_lastAnalysisTime == 0 ||
+      now - g_lastAnalysisTime >= InpRefreshSeconds)
+   {
+      g_lastAnalysisTime = now;
+
+      if(AnalyzeAllTimeframes())
+      {
+         ExecuteSignal(g_signalDirection);
+      }
+   }
+
+   UpdateDashboard();
+}
+
+//+------------------------------------------------------------------+
+//| TICK EVENT                                                       |
+//+------------------------------------------------------------------+
+
+void OnTick()
+{
+   ManagePositionTime();
+
+   ManageBreakEven();
+
    CheckAccountProtection();
 
    CheckBasketProtection();
 
-   datetime now = TimeCurrent();
-
-   if(g_lastStrategyRefresh == 0 ||
-      now - g_lastStrategyRefresh >=
-      InpStrategyRefreshSeconds)
-   {
-      g_lastStrategyRefresh = now;
-
-      if(!g_tradingPaused && !g_lossLimitHit)
-      {
-         if(AnalyzeAllTimeframes())
-         {
-            if(g_currentSignal == 1)
-               ExecuteSignal(1);
-
-            else if(g_currentSignal == -1)
-               ExecuteSignal(-1);
-         }
-      }
-   }
-
    UpdateDashboard();
 }
 
-void OnTick()
-{
-   ManageOpenPositions();
-
-   UpdateDashboard();
-}
+//+------------------------------------------------------------------+
+//| TRADE TRANSACTION EVENT                                          |
+//+------------------------------------------------------------------+
 
 void OnTradeTransaction(
-   const MqlTradeTransaction &transaction,
+   const MqlTradeTransaction &trans,
    const MqlTradeRequest &request,
    const MqlTradeResult &result
 )
 {
-   if(transaction.type != TRADE_TRANSACTION_DEAL_ADD)
+   if(trans.type != TRADE_TRANSACTION_DEAL_ADD)
       return;
 
-   if(transaction.deal == 0)
+   if(trans.deal == 0)
       return;
 
-   if(!HistoryDealSelect(transaction.deal))
+   if(!HistoryDealSelect(trans.deal))
       return;
 
    string dealSymbol =
       HistoryDealGetString(
-         transaction.deal,
+         trans.deal,
          DEAL_SYMBOL
       );
 
+   if(dealSymbol != _Symbol)
+      return;
+
    ulong dealMagic =
       (ulong)HistoryDealGetInteger(
-         transaction.deal,
+         trans.deal,
          DEAL_MAGIC
       );
 
-   if(dealSymbol != _Symbol ||
-      dealMagic != InpMagicNumber)
-   {
+   if(dealMagic != InpMagicNumber)
       return;
-   }
 
    ENUM_DEAL_ENTRY entryType =
       (ENUM_DEAL_ENTRY)HistoryDealGetInteger(
-         transaction.deal,
+         trans.deal,
          DEAL_ENTRY
       );
 
-   if(entryType != DEAL_ENTRY_OUT &&
-      entryType != DEAL_ENTRY_OUT_BY)
+   if(entryType == DEAL_ENTRY_OUT ||
+      entryType == DEAL_ENTRY_OUT_BY)
    {
-      return;
-   }
-
-   double profit =
-      HistoryDealGetDouble(
-         transaction.deal,
-         DEAL_PROFIT
-      );
-
-   double commission =
-      HistoryDealGetDouble(
-         transaction.deal,
-         DEAL_COMMISSION
-      );
-
-   double swap =
-      HistoryDealGetDouble(
-         transaction.deal,
-         DEAL_SWAP
-      );
-
-   double netResult =
-      profit + commission + swap;
-
-   if(netResult < 0.0)
-   {
-      g_consecutiveLosses++;
-
-      if(InpStopAfterLossLimit > 0 &&
-         g_consecutiveLosses >= InpStopAfterLossLimit)
-      {
-         g_tradingPaused = true;
-
-         Print(
-            "Trading paused after consecutive losses: ",
-            g_consecutiveLosses
+      double dealProfit =
+         HistoryDealGetDouble(
+            trans.deal,
+            DEAL_PROFIT
          );
-      }
+
+      double dealCommission =
+         HistoryDealGetDouble(
+            trans.deal,
+            DEAL_COMMISSION
+         );
+
+      double dealSwap =
+         HistoryDealGetDouble(
+            trans.deal,
+            DEAL_SWAP
+         );
+
+      Print(
+         "Position exit recorded. Net deal result: ",
+         DoubleToString(
+            dealProfit + dealCommission + dealSwap,
+            2
+         )
+      );
    }
-   else if(netResult > 0.0)
-   {
-      g_consecutiveLosses = 0;
-   }
-}     
+}
+      
