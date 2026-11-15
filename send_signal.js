@@ -1,44 +1,32 @@
+// send_signal.js - uses the same rule-based engine as the TradingFloor AI website
+// (EMA + RSI + breakout + ATR), pulls live candles, sends the best setup to Telegram.
+// Needs Node 22+ (built-in fetch and WebSocket).
+
 const token = process.env.BOT_TOKEN;
 const chatId = process.env.CHAT_ID;
 
-// EDIT THESE: side, take profit and stop loss distance
-// days: 0=Sun, 1=Mon ... 6=Sat
-const pairs = [
-  { name: "XAUUSD", days: [1,2,3,4,5], side: "BUY", tp: 15, sl: 8, dp: 2 },
-  { name: "BTCUSD", days: [0,1,2,3,4,5,6], side: "BUY", tp: 800, sl: 400, dp: 0 },
-  { name: "USDJPY", days: [1,2,3,4,5], side: "BUY", tp: 0.5, sl: 0.3, dp: 3 }
+/* ---------- EDIT HERE: pairs ---------- */
+const PAIRS = {
+  XAUUSD:    { label: "XAUUSD (Gold)",         kind: "forex",  dp: 2, yahoo: ["XAUUSD=X", "GC=F"] },
+  USDJPY:    { label: "USDJPY",                kind: "forex",  dp: 3, yahoo: ["USDJPY=X"] },
+  BTCUSD:    { label: "BTCUSD",                kind: "crypto", dp: 2, binance: "BTCUSDT", kraken: "XBTUSD" },
+  R_75:      { label: "Volatility 75 Index",   kind: "deriv",  dp: 2 },
+  BOOM1000:  { label: "Boom 1000 Index",       kind: "deriv",  dp: 3 },
+  CRASH1000: { label: "Crash 1000 Index",      kind: "deriv",  dp: 3 }
+};
+
+// Which pairs each run tries. Run 0 = 05:30 UTC, run 1 = 12:30 UTC, run 2 = 13:30 UTC.
+// Weekdays: 2 signals each for gold, bitcoin, USDJPY (6 a day).
+const WEEKDAY_PLAN = [["XAUUSD", "BTCUSD"], ["USDJPY", "XAUUSD"], ["BTCUSD", "USDJPY"]];
+// Weekends: 5 signals (bitcoin x2 + Deriv synthetics).
+const WEEKEND_PLAN = [["BTCUSD", "R_75"], ["BOOM1000", "CRASH1000"], ["BTCUSD"]];
+
+// Timeframes checked for every pair. The 1H gets a small bonus so higher timeframe wins ties.
+const TFS = [
+  { name: "1H",  bq: "1h",  bin: "1h",  kraken: 60, deriv: 3600, yahoo: { interval: "60m", range: "1mo" }, bonus: 10 },
+  { name: "15M", bq: "15m", bin: "15m", kraken: 15, deriv: 900,  yahoo: { interval: "15m", range: "5d" },  bonus: 0 }
 ];
 
-async function getPrice(name) {
-  if (name === "BTCUSD") {
-    const r = await fetch("https://api.coinbase.com/v2/prices/BTC-USD/spot");
-    return parseFloat((await r.json()).data.amount);
-  }
-  const r = await fetch("https://open.er-api.com/v6/latest/USD");
-  const rates = (await r.json()).rates;
-  return name === "USDJPY" ? rates.JPY : 1 / rates.XAU;
-}
+const SCHEDULE_SLOTS = { "30 5 * * *": 0, "30 12 * * *": 1, "30 13 * * *": 2 };
 
-async function main() {
-  const today = new Date().getUTCDay();
-  for (const p of pairs) {
-    if (!p.days.includes(today)) continue;
-    const entry = await getPrice(p.name);
-    const dir = p.side === "BUY" ? 1 : -1;
-    const tp = entry + dir * p.tp;
-    const sl = entry - dir * p.sl;
-    const text =
-      "📊 " + p.name + " " + p.side + "\n" +
-      "Entry: " + entry.toFixed(p.dp) + "\n" +
-      "Take Profit: " + tp.toFixed(p.dp) + "\n" +
-      "Stop Loss: " + sl.toFixed(p.dp) + "\n\n" +
-      "Blue Pips";
-    const res = await fetch("https://api.telegram.org/bot" + token + "/sendMessage", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ chat_id: chatId, text: text })
-    });
-    console.log(await res.json());
-  }
-}
-main();
+/* ---------- helpers ---------- */
