@@ -15,8 +15,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-                - run: node send_signal.js
+                - run: node --version
+      - run: node send_signal.js
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           SCHEDULE: ${{ github.event.schedule }}
+          
