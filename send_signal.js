@@ -1,9 +1,13 @@
-// send_signal.js - uses the same rule-based engine as the TradingFloor AI website
-// (EMA + RSI + breakout + ATR), pulls live candles, sends the best setup to Telegram.
+// send_signal.js - same rule-based engine as the TradingFloor AI website
+// (EMA + RSI + breakout + ATR), live candles, best setup sent to Telegram.
 // Needs Node 22+ (built-in fetch and WebSocket).
 
 const token = process.env.BOT_TOKEN;
 const chatId = process.env.CHAT_ID;
+
+if (typeof WebSocket === "undefined") {
+  console.log("NOTE: this Node version has no built-in WebSocket. Deriv pairs will be skipped. Use Node 22.");
+}
 
 /* ---------- EDIT HERE: pairs ---------- */
 const PAIRS = {
@@ -90,6 +94,7 @@ async function fromKraken(pair, minutes) {
 
 function derivOnce(url, symbol, gran) {
   return new Promise((resolve, reject) => {
+    if (typeof WebSocket === "undefined") return reject(new Error("No WebSocket in this Node version"));
     const ws = new WebSocket(url);
     const timer = setTimeout(() => { try { ws.close(); } catch {} reject(new Error("Deriv timeout")); }, 15000);
     ws.onopen = () => ws.send(JSON.stringify({
@@ -138,7 +143,7 @@ async function getCandles(key, tf) {
     } catch (e) { errs.push(name + ": " + e.message); }
   }
   throw new Error(errs.join(" | "));
-}
+    }
 /* ---------- signal engine (same logic as the website) ---------- */
 function ema(vals, p) {
   if (!vals.length) return [];
